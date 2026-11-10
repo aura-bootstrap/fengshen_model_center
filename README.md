@@ -43,7 +43,7 @@
 │  ├─ safefs/                   # Windows 安全文件系统边界
 │  ├─ shim/                     # shim 的 HTTP/WS 服务与旧协议桥
 │  └─ upstream/                 # 复制自 generation_server 的依赖闭包（非测试源码）
-└─ .github/workflows/ci.yml
+└─ docs/                        # 上游同步等说明
 ```
 
 `external/` 按场景存放不属于 Go 业务代码、也不在模型权重库中的构建输入与资源。模型权重仍只由 `%USERPROFILE%\.fengshen\model_manifest.json` 指向。
@@ -106,7 +106,7 @@ go vet ./...
 go test ./...
 ```
 
-CI 在 `windows-latest` 运行以上检查，并附加仓库守卫：Go 源码禁止 `fengshen-slicer` 导入、禁止权重/二进制扩展名、禁止大于 100 MiB 的文件。
+仓库不配置 CI workflow；以上检查需在本地执行。仓库守卫另行约定：Go 源码禁止 `fengshen-slicer` 导入、禁止权重/二进制扩展名、禁止大于 100 MiB 的文件。
 
 ## 组件构建（可选，需本地工具链）
 
