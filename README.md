@@ -43,6 +43,9 @@
 │  ├─ safefs/                   # Windows 安全文件系统边界
 │  ├─ shim/                     # shim 的 HTTP/WS 服务与旧协议桥
 │  └─ upstream/                 # 复制自 generation_server 的依赖闭包（非测试源码）
+├─ scripts/                     # 一键构建、bin 平铺安装、启动与测试
+├─ build/                       # 本地构建产物（gitignore，不随仓库）
+├─ bin/                         # 本地可运行部署目录（gitignore，不随仓库）
 └─ docs/                        # 上游同步等说明
 ```
 
@@ -62,6 +65,54 @@ go build -o fengshen-shim.exe ./cmd/fengshen-shim
 ```powershell
 go run ./cmd/build -mode manifest -root <目录> -template <模板>
 ```
+
+## 一键构建
+
+运行 `scripts\build.bat`（双击或在仓库根执行），进入循环菜单。`scripts/` 下只提供 bat 入口，不再保留对应的 `.ps1` 版本：
+
+1. 构建全部（中心 + shim + 可用的原生/冻结组件）
+2. 仅构建中心与 shim
+3. 构建 whisper-batch
+4. 构建 whisper-stream
+5. 构建 llama-runtime
+6. 冻结 Demucs / Seed-VC
+7. 设置依赖路径与版本
+8. 清理 build 目录
+9. 安装到 bin（全部或单个部分）
+0. 退出
+
+所有构建产物只写入 `build\<选项>-<时间戳>\`，`build/` 已加入 `.gitignore`。原生构建前可在菜单 7 设置 Whisper 依赖目录与 llama 源码归档；冻结还需要 Python 输入目录与输入锁文件。也可通过 `FENGSHEN_WHISPER_DEPS`、`FENGSHEN_LLAMA_SOURCE_ARCHIVE`、`FENGSHEN_FREEZE_INPUTS`、`FENGSHEN_FREEZE_INPUT_LOCK` 预置。直接执行单个菜单项可用 `scripts\build.bat 2` 预选菜单项 2。
+
+安装与构建分离：菜单 9 可取 `build\` 下各部分最近一次完整构建，把成品平铺复制到 `bin\`，同名文件直接覆盖，不创建 `components\`、`model-center\` 等层级。也可直接执行 `scripts\install.bat [all|center|whisper-batch|whisper-stream|llama-runtime|timbre]`，或追加构建目录参数只安装指定产物，例如 `scripts\install.bat center build\center-20261110-171830-755`。
+
+## bin 部署
+
+`bin\` 与外部 `model_root` 配合即可启动本地服务；安装采用平铺结构，只放可执行文件，不带组件包与版本目录：
+
+```text
+bin\
+├─ fengshen-model-center.exe
+├─ fengshen-shim.exe
+├─ whisper-batch.exe
+├─ whisper-stream.exe
+├─ llama-runtime.exe
+├─ llama-server.exe
+├─ demucs-runner.exe
+└─ seedvc-runner.exe
+```
+
+前两个文件是中心运行所需；其余文件在安装对应部分后出现。`demucs-runner` / `seedvc-runner` 是 PyInstaller onedir，平铺安装只复制入口 exe，依赖文件仍保留在 `build\` 产物中。
+
+```powershell
+scripts\run.bat
+scripts\run.bat W:\model_root 127.0.0.1:18120
+```
+
+`scripts\run.bat` 直接读取 `bin\fengshen-model-center.exe`，在后台启动并把中心 PID 写入 `%USERPROFILE%\.fengshen\model_center.pid`；输出写入同目录的 `model_center.out.log` / `model_center.err.log`。重复执行会检测已在运行的实例并直接返回。启动脚本不复制进 `bin\`。
+
+停止服务：读取 PID 文件后执行 `taskkill /T /F /PID <pid>`。
+
+用户目录数据不复制进 `bin\`：清单读取真实用户目录 `%USERPROFILE%\.fengshen\model_manifest.json`（仅当清单不存在时才用给定 `model_root` 生成），运行数据写入 `%APPDATA%\FengshenSlicer\model-center`。`model_root` 只读使用，不复制、不修改。重新安装会覆盖 `bin\` 根下的同名文件。
 
 ## 运行
 
@@ -108,6 +159,28 @@ go test ./...
 
 仓库不配置 CI workflow；以上检查需在本地执行。仓库守卫另行约定：Go 源码禁止 `fengshen-slicer` 导入、禁止权重/二进制扩展名、禁止大于 100 MiB 的文件。
 
+## 测试
+
+```powershell
+scripts\test.bat
+scripts\test.bat -MinFirstPartyCoverage 80 -MinPackageCoverage 50
+```
+
+执行顺序：
+
+1. `go vet ./...`；
+2. `go test -count=1 -covermode=atomic ./...`，不使用测试结果缓存；
+3. 排除 `internal/upstream/`（复制依赖闭包）后的第一方覆盖率门禁；
+4. 每个有测试的 Go 包单独覆盖率门禁；
+5. 生成 `build\full-test\coverage.html`；
+6. 构建契约；
+7. 检查 `bin\` 中已安装的中心与 shim（需先执行 `scripts\install.bat center`）；
+8. 读取 `%USERPROFILE%\.fengshen\model_center.pid`；若进程不存在则调用 `scripts\run.bat` 启动并重读 PID，然后通过 `/api/state`、`/api/report`、`/api/components` 做进程健康测试。
+
+测试启动的实例会保留运行，不会在测试结束时停止。`-SkipProcess` 跳过第 8 步，`-SkipBuildContract` 跳过第 6 步。
+
+默认门禁：第一方覆盖率 ≥ 70%，单包 ≥ 40%。当前基线：第一方 70.4%，componentclient 82.8%，componentprotocol 86.4%，modelmanifest 87.5%。覆盖率报告不宣称 100%：OS 差异分支、错误注入路径和 `internal/upstream` 复制闭包仍会留白，门禁用于防止明显回退。
+
 ## 组件构建（可选，需本地工具链）
 
 `external/` 下的脚本用于生成受控组件与交付清单，要求 MSVC x64、CMake、Ninja 及锁定的上游归档：
@@ -116,7 +189,7 @@ go test ./...
 - `external/whisper/batch/build.ps1`、`external/whisper/stream/build.ps1`、`external/llama/runtime/build.ps1`：原生组件
 - `external/model-center/build_test.ps1`：本地回归
 
-这些脚本默认把产物写到仓库外的全新目录，不随仓库提交。
+这些脚本接受仓库外的全新目录或 `<repo>\build\...`；一键脚本统一写入 `build\`，该目录不随仓库提交。
 
 ## 上游代码同步
 

@@ -1,7 +1,9 @@
 # 构建产物与运行时数据
 *.exe
 *.dll
-bin/
+/build/
+/bin/
+/examples/
 output/
 warehouse/
 release/
