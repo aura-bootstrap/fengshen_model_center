@@ -12,30 +12,17 @@ import (
 	"github.com/coder/websocket"
 )
 
-const testToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
 func TestNewRejectsInvalidBase(t *testing.T) {
 	for _, base := range []string{"http://10.0.0.1:1", "https://127.0.0.1:1", "http://127.0.0.1:1/path", "http://localhost:1"} {
-		if _, err := New(base, testToken); err == nil {
+		if _, err := New(base); err == nil {
 			t.Fatalf("accepted base %q", base)
 		}
-	}
-	if _, err := New("http://127.0.0.1:1", "short"); err == nil {
-		t.Fatal("accepted short token")
 	}
 }
 
 func TestClientHealthJobsArtifacts(t *testing.T) {
 	mux := http.NewServeMux()
-	auth := func(next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("Authorization") != "Bearer "+testToken {
-				w.WriteHeader(http.StatusForbidden)
-				return
-			}
-			next(w, r)
-		}
-	}
+	auth := func(next http.HandlerFunc) http.HandlerFunc { return next }
 	mux.HandleFunc("/healthz", auth(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
 	mux.HandleFunc("/v1/jobs", auth(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
@@ -49,7 +36,7 @@ func TestClientHealthJobsArtifacts(t *testing.T) {
 	}))
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
-	c, err := New(ts.URL, testToken)
+	c, err := New(ts.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,10 +64,6 @@ func TestClientHealthJobsArtifacts(t *testing.T) {
 
 func TestClientStream(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+testToken {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
 		c, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
@@ -93,7 +76,7 @@ func TestClientStream(t *testing.T) {
 		_ = c.Close(websocket.StatusNormalClosure, "")
 	}))
 	defer ts.Close()
-	c, err := New(ts.URL, testToken)
+	c, err := New(ts.URL)
 	if err != nil {
 		t.Fatal(err)
 	}

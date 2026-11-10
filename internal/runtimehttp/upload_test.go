@@ -64,9 +64,9 @@ func TestUploadReservesGlobalBytesBeforePrefix(t *testing.T) {
 		b := &gatedUploadBody{prefix: bytes.NewReader(nil), entered: make(chan struct{}), closed: make(chan struct{})}
 		bodies = append(bodies, b)
 		r := httptest.NewRequest("POST", "http://127.0.0.1:1234"+integration.RuntimeAssetsPath, nil)
+		addSession(r)
 		r.Body = b
 		r.ContentLength = 1 << 30
-		r.Header.Set(integration.RuntimeHeader, "secret")
 		r.Header.Set("Content-Type", "audio/wav")
 		done := make(chan struct{})
 		pending = append(pending, done)
@@ -103,9 +103,9 @@ func TestUploadCapacityIncludesFlights(t *testing.T) {
 			h.mu.Unlock()
 			b := &gatedUploadBody{prefix: bytes.NewReader(nil), entered: make(chan struct{}), closed: make(chan struct{})}
 			r := httptest.NewRequest("POST", "http://127.0.0.1:1234"+integration.RuntimeAssetsPath, nil)
+			addSession(r)
 			r.Body = b
 			r.ContentLength = int64(len(picture()))
-			r.Header.Set(integration.RuntimeHeader, "secret")
 			r.Header.Set("Content-Type", "image/png")
 			done := make(chan struct{})
 			go func() { h.ServeHTTP(httptest.NewRecorder(), r); close(done) }()
@@ -140,9 +140,9 @@ func TestUploadCancellationReclaimsReservation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &gatedUploadBody{prefix: bytes.NewReader(picture()[:16]), entered: make(chan struct{}), closed: make(chan struct{})}
 	r := httptest.NewRequest("POST", "http://127.0.0.1:1234"+integration.RuntimeAssetsPath, nil).WithContext(ctx)
+	addSession(r)
 	r.Body = b
 	r.ContentLength = int64(len(picture()))
-	r.Header.Set(integration.RuntimeHeader, "secret")
 	r.Header.Set("Content-Type", "image/png")
 	done := make(chan struct{})
 	w := httptest.NewRecorder()
@@ -208,7 +208,7 @@ func TestUploadResponseDoesNotHoldGlobalLock(t *testing.T) {
 	h, a, _, _ := setup(t)
 	w := &gatedUploadResponse{ResponseRecorder: httptest.NewRecorder(), entered: make(chan struct{}), release: make(chan struct{})}
 	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:1234"+integration.RuntimeAssetsPath, bytes.NewReader(picture()))
-	r.Header.Set(integration.RuntimeHeader, "secret")
+	addSession(r)
 	r.Header.Set("Content-Type", "image/png")
 	done := make(chan struct{})
 	go func() { h.ServeHTTP(w, r); close(done) }()
@@ -232,9 +232,9 @@ func TestStalledUploadDoesNotBlockRuntime(t *testing.T) {
 				g := a.grant
 				b := &gatedUploadBody{prefix: bytes.NewReader(picture()[:prefix]), entered: make(chan struct{}), closed: make(chan struct{})}
 				r := httptest.NewRequest("POST", "http://127.0.0.1:1234"+integration.RuntimeAssetsPath, nil)
+				addSession(r)
 				r.Body = b
 				r.ContentLength = int64(len(picture()))
-				r.Header.Set(integration.RuntimeHeader, "secret")
 				r.Header.Set("Content-Type", "image/png")
 				w := httptest.NewRecorder()
 				done := make(chan struct{})

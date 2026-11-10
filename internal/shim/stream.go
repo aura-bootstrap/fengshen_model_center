@@ -43,7 +43,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	if start.VAD {
 		args = append(args, "--vad", "--vad-model", start.Models["whisper-vad"])
 	}
-	child, err := s.startChild(ctx, s.cfg.Target, args, streamLimits(*start.DurationSec), nil)
+	child, err := s.startChild(ctx, s.cfg.Target, args, streamLimits(*start.DurationSec))
 	if err != nil {
 		writeStreamError(ctx, c, start, "component_failed")
 		return

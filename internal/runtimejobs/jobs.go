@@ -397,7 +397,7 @@ func (m *Manager) Cancel(session, task, id string) (Snapshot, error) {
 }
 
 // ExpireSession revokes future admission and cancels only this session's work.
-// The authenticated session owner, not HTTP body data, calls this method.
+// The owning session, not HTTP body data, calls this method.
 func (m *Manager) ExpireSession(session string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

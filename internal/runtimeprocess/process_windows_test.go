@@ -38,7 +38,7 @@ func TestHelperProcess(t *testing.T) {
 				os.Exit(97)
 			}
 		case "environment":
-			if key := os.Getenv("LLAMA_API_KEY"); key != "" && strings.Contains(strings.Join(os.Args, "\x00"), key) {
+			if key := os.Getenv("INJECTED_TOKEN"); key != "" && strings.Contains(strings.Join(os.Args, "\x00"), key) {
 				os.Exit(98)
 			}
 			for _, entry := range os.Environ() {
@@ -120,13 +120,9 @@ func TestHelperProcess(t *testing.T) {
 	}
 }
 
-type llamaStarter interface {
-	StartLlama(context.Context, VerifiedBinary, Options, string) (*Process, error)
-}
-
 func TestMinimalChildEnvironment(t *testing.T) {
 	c := exec.CommandContext(testContext(t), os.Args[0], "-test.run=TestHelperProcess", "--", helperFlag, "environment-parent")
-	c.Env = append(os.Environ(), "HTTP_PROXY=http://injected.invalid", "Providersecret=secret", "CENTER_TOKEN=token", "LLAMA_API_KEY=injected", "LLAMA_ARG_MODEL=injected", "PATH=C:\\untrusted", "SystemRoot=C:\\untrusted", "TEMP=C:\\untrusted", "TMP=C:\\untrusted")
+	c.Env = append(os.Environ(), "HTTP_PROXY=http://injected.invalid", "Providersecret=secret", "CENTER_TOKEN=token", "INJECTED_TOKEN=injected", "INJECTED_MODEL=injected", "PATH=C:\\untrusted", "SystemRoot=C:\\untrusted", "TEMP=C:\\untrusted", "TMP=C:\\untrusted")
 	data, err := c.CombinedOutput()
 	if err != nil {
 		t.Fatalf("environment helper: %v\n%s", err, data)
@@ -138,60 +134,37 @@ func checkMinimalEnvironment(t *testing.T) {
 	defer s.Close()
 	b := testBinary(t)
 	before := strings.Join(os.Environ(), "\x00")
-	starter, ok := any(s).(llamaStarter)
-	if !ok {
-		t.Error("Supervisor lacks trusted StartLlama API")
+	p, err := s.Start(testContext(t), b, options("environment"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	key := strings.Repeat("ab", 32)
-	for _, llama := range []bool{false, true} {
-		if llama && !ok {
-			continue
+	data, err := io.ReadAll(p.Stdout())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = waitProcess(t, p); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]string{}
+	for _, entry := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		name, value, found := strings.Cut(strings.TrimSuffix(entry, "\r"), "=")
+		name = strings.ToUpper(name)
+		if !found || seen[name] != "" {
+			t.Fatalf("malformed or duplicate environment name %q", name)
 		}
-		var p *Process
-		var err error
-		if llama {
-			p, err = starter.StartLlama(testContext(t), b, options("environment"), key)
-		} else {
-			p, err = s.Start(testContext(t), b, options("environment"))
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		data, err := io.ReadAll(p.Stdout())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err = waitProcess(t, p); err != nil {
-			t.Fatal(err)
-		}
-		seen := map[string]string{}
-		for _, entry := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-			name, value, found := strings.Cut(strings.TrimSuffix(entry, "\r"), "=")
-			name = strings.ToUpper(name)
-			if !found || seen[name] != "" {
-				t.Fatalf("malformed or duplicate environment name %q", name)
+		seen[name] = value
+		switch name {
+		case "SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP":
+			if strings.Contains(strings.ToLower(value), "untrusted") || !filepath.IsAbs(strings.Split(value, ";")[0]) {
+				t.Errorf("untrusted system path %q", name)
 			}
-			seen[name] = value
-			switch name {
-			case "SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP":
-				if strings.Contains(strings.ToLower(value), "untrusted") || !filepath.IsAbs(strings.Split(value, ";")[0]) {
-					t.Errorf("untrusted system path %q", name)
-				}
-			case "LLAMA_API_KEY":
-				if !llama || value != key {
-					t.Error("incorrect child key")
-				}
-			default:
-				t.Errorf("inherited forbidden environment name %q", name)
-			}
+		default:
+			t.Errorf("inherited forbidden environment name %q", name)
 		}
-		for _, name := range []string{"SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP"} {
-			if seen[name] == "" {
-				t.Errorf("missing %s", name)
-			}
-		}
-		if llama && seen["LLAMA_API_KEY"] != key {
-			t.Error("missing llama key")
+	}
+	for _, name := range []string{"SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP"} {
+		if seen[name] == "" {
+			t.Errorf("missing %s", name)
 		}
 	}
 	if strings.Join(os.Environ(), "\x00") != before {
@@ -199,99 +172,25 @@ func checkMinimalEnvironment(t *testing.T) {
 	}
 }
 
-func TestStartLlamaRejectsMalformedKeys(t *testing.T) {
-	s := &Supervisor{}
-	defer s.Close()
-	starter, ok := any(s).(llamaStarter)
-	if !ok {
-		t.Fatal("Supervisor lacks trusted StartLlama API")
-	}
-	b := testBinary(t)
-	for _, key := range []string{"", strings.Repeat("a", 63), strings.Repeat("a", 65), strings.Repeat("A", 64), strings.Repeat("g", 64), strings.Repeat("a", 62) + "\x00x", strings.Repeat("a", 62) + "\nx", "LLAMA_API_KEY=" + strings.Repeat("a", 64)} {
-		p, err := starter.StartLlama(testContext(t), b, options("echo"), key)
-		if p != nil {
-			p.Close()
-			t.Error("malformed key created a process")
-		}
-		if err == nil || strings.Contains(err.Error(), key) && key != "" {
-			t.Error("malformed key accepted or disclosed")
-		}
-	}
-}
-
 func TestExplicitUnicodeEnvironmentBlock(t *testing.T) {
-	for _, key := range []string{"", strings.Repeat("cd", 32)} {
-		var extra []string
-		if key != "" {
-			extra = []string{"LLAMA_API_KEY=" + key}
-		}
-		block, err := minimalEnvironment(extra)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(block) < 2 || block[len(block)-1] != 0 || block[len(block)-2] != 0 {
-			t.Fatal("environment block lacks double NUL")
-		}
-		entries := strings.Split(string(utf16.Decode(block[:len(block)-2])), "\x00")
-		previous := ""
-		for _, entry := range entries {
-			name, value, ok := strings.Cut(entry, "=")
-			if !ok || value == "" || strings.ToUpper(name) <= previous {
-				t.Fatal("malformed or unsorted environment block")
-			}
-			previous = strings.ToUpper(name)
-		}
-		if (key == "" && len(entries) != 5) || (key != "" && len(entries) != 6) {
-			t.Fatal("unexpected environment block entries")
-		}
-	}
-}
-
-func TestStartLlamaSharedSecurityAndLifecycle(t *testing.T) {
-	b := testBinary(t)
-	key := strings.Repeat("ef", 32)
-	s := &Supervisor{}
-	defer s.Close()
-	for _, bad := range []VerifiedBinary{{}, func() VerifiedBinary { x := b; x.file.IndexLow ^= 1; return x }(), func() VerifiedBinary { x := b; x.digest = strings.Repeat("0", 64); return x }()} {
-		if p, err := s.StartLlama(testContext(t), bad, options("echo"), key); err == nil {
-			p.Close()
-			t.Fatal("llama bypassed binary verification")
-		}
-	}
-	if p, err := s.StartLlama(testContext(t), b, Options{}, key); err == nil {
-		p.Close()
-		t.Fatal("llama bypassed option limits")
-	}
-	ctx, cancel := context.WithCancel(testContext(t))
-	defer cancel()
-	p, err := s.StartLlama(ctx, b, options("tree"), key)
+	block, err := minimalEnvironment([]string{"AAA_INPUT=value"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pids := readPIDs(t, p.Stdout())
-	hs := []syscall.Handle{openWitness(t, pids[0]), openWitness(t, pids[1])}
-	if err = p.CheckIdentity(b); err != nil {
-		t.Fatal(err)
+	if len(block) < 2 || block[len(block)-1] != 0 || block[len(block)-2] != 0 {
+		t.Fatal("environment block lacks double NUL")
 	}
-	cancel()
-	if err = waitProcess(t, p); !errors.Is(err, context.Canceled) {
-		t.Fatalf("llama cancellation: %v", err)
+	entries := strings.Split(string(utf16.Decode(block[:len(block)-2])), "\x00")
+	previous := ""
+	for _, entry := range entries {
+		name, value, ok := strings.Cut(entry, "=")
+		if !ok || value == "" || strings.ToUpper(name) <= previous {
+			t.Fatal("malformed or unsorted environment block")
+		}
+		previous = strings.ToUpper(name)
 	}
-	for _, h := range hs {
-		assertDead(t, h)
-	}
-	o := options("flood")
-	o.MaxStdoutBytes = 1
-	p, err = s.StartLlama(testContext(t), b, o, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = waitProcess(t, p); !errors.Is(err, ErrOutputLimit) {
-		t.Fatalf("llama output limit: %v", err)
-	}
-	s.Close()
-	if _, err = s.StartLlama(testContext(t), b, options("echo"), key); !errors.Is(err, ErrClosed) {
-		t.Fatalf("llama start after close: %v", err)
+	if len(entries) != 6 {
+		t.Fatal("unexpected environment block entries")
 	}
 }
 
@@ -535,7 +434,7 @@ func TestSuspendedStartupFailureKillsAndWaits(t *testing.T) {
 	}
 	before := children()
 	for i := 0; i < 5; i++ {
-		n, _, _, _, _, err := launch(testContext(t), bad, o, nil)
+		n, _, _, _, _, err := launch(testContext(t), bad, o)
 		if err == nil {
 			n.closeJob()
 			n.wait()

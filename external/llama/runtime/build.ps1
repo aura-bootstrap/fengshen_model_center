@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 $entry = [IO.Path]::GetFullPath($PSScriptRoot)
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..')).TrimEnd('\','/')
 $build = [IO.Path]::GetFullPath($BuildDirectory).TrimEnd('\','/')
-if (-not [IO.Path]::IsPathRooted($BuildDirectory) -or $build.StartsWith($repo, [StringComparison]::OrdinalIgnoreCase) -or -not $build.StartsWith('W:\QoderCN\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Use a new absolute build directory under W:/QoderCN outside the repository' }
+if (-not [IO.Path]::IsPathRooted($BuildDirectory) -or $build.StartsWith($repo, [StringComparison]::OrdinalIgnoreCase) -or -not $build.StartsWith('W:\QoderCN', [StringComparison]::OrdinalIgnoreCase)) { throw 'Use a new absolute build directory under W:/QoderCN outside the repository' }
 if (Test-Path $build) { throw 'Build directory must not exist; no overwrite or mutable source reuse' }
 $lock = Get-Content -Raw (Join-Path $entry 'source-lock.json') | ConvertFrom-Json
 $selected = $lock.profiles.$Profile
@@ -88,7 +88,7 @@ $inputs = @([ordered]@{ name='llama.cpp-source'; version=$lock.commit; sha256=$l
 foreach ($p in @((Join-Path $entry 'component_info.cpp'), (Join-Path $entry 'component_profile.h.in'), (Join-Path $entry 'CMakeLists.txt'), (Join-Path $entry 'source-lock.json'), (Join-Path $entry 'supervisor-contract.json'), $PSCommandPath, $cmake, $ninja, (Get-Command cl.exe).Source, (Get-Command link.exe).Source)) {
     $inputs += [ordered]@{ name=[IO.Path]::GetFileName($p); version=$lock.version; sha256=(Hash $p); license=$(if ($p.StartsWith($vs, [StringComparison]::OrdinalIgnoreCase)) { 'Microsoft-toolchain-build-only' } else { 'project-source' }) }
 }
-$record = [ordered]@{ schema=1; binary_source='source-build'; upstream_binary_reused=$false; source_commit=$lock.commit; platform=$lock.platform; crt='static /MT'; version=$lock.version; profile=$Profile; driver_requirements=@($selected.driver_requirements); backend=$selected.backend; build_inputs=$inputs; compiler=($compilerOutput -join "`n"); model_load='not_tested'; text_inference='not_tested'; vision_inference='not_tested'; authenticated_startup='not_tested'; clean_environment='not_verified' }
+$record = [ordered]@{ schema=1; binary_source='source-build'; upstream_binary_reused=$false; source_commit=$lock.commit; platform=$lock.platform; crt='static /MT'; version=$lock.version; profile=$Profile; driver_requirements=@($selected.driver_requirements); backend=$selected.backend; build_inputs=$inputs; compiler=($compilerOutput -join "`n"); model_load='not_tested'; text_inference='not_tested'; vision_inference='not_tested'; server_startup='not_tested'; clean_environment='not_verified' }
 JsonFile $record (Join-Path $delivery 'build-evidence.json')
 $files = @(Get-ChildItem $delivery -File -Recurse | Sort-Object FullName | ForEach-Object { [ordered]@{ path=$_.FullName.Substring($delivery.Length+1).Replace('\','/'); bytes=$_.Length.ToString([Globalization.CultureInfo]::InvariantCulture); sha256=(Hash $_.FullName) } })
 $manifest = [ordered]@{ schema=1; component_id='llama-runtime'; version=$lock.version; os='windows'; arch='amd64'; entry_type='executable'; entry='llama-runtime.exe'; packaging='native'; protocols=@('llama.cpp.server.http/b12182'); files=$files; runtime_dependencies=@(); model_refs=@('local-text','local-vision'); driver_requirements=@($selected.driver_requirements); build_inputs=$inputs; startup_report_ref='startup-report.json' }

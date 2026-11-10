@@ -2,7 +2,6 @@ package runtimeadapter
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -52,11 +51,6 @@ func (e *Executor) launchShimProcess(ctx context.Context, mode, target, frontal,
 	if e.shimPath == "" {
 		return nil, errors.New("center_shim_missing")
 	}
-	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return nil, err
-	}
-	token := hex.EncodeToString(tokenBytes)
 	var address string
 	for attempt := 0; attempt < 3; attempt++ {
 		listener, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -91,18 +85,18 @@ func (e *Executor) launchShimProcess(ctx context.Context, mode, target, frontal,
 		_ = os.RemoveAll(dir)
 		return nil, errors.New("center_shim_invalid")
 	}
-	proc, err := e.supervisor.StartWithEnv(ctx, b, runtimeprocess.Options{
+	proc, err := e.supervisor.Start(ctx, b, runtimeprocess.Options{
 		Args:           args,
 		MaxStdinBytes:  1,
 		MaxStdoutBytes: 1 << 20,
 		MaxStderrBytes: 1 << 20,
 		BufferBytes:    64 << 10,
-	}, map[string]string{"FENGSHEN_SHIM_TOKEN": token})
+	})
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, err
 	}
-	client, err := componentclient.New("http://"+address, token)
+	client, err := componentclient.New("http://" + address)
 	if err != nil {
 		_ = proc.Close()
 		_ = os.RemoveAll(dir)

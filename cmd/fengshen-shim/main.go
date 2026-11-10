@@ -1,6 +1,6 @@
 // Command fengshen-shim adapts one legacy local component to the center's
 // loopback HTTP/WS contract. It is started by the center with a fixed mode,
-// target and per-instance token; it never accepts commands or URLs.
+// target; it never accepts commands or URLs.
 package main
 
 import (
@@ -26,10 +26,6 @@ func main() {
 	profile := flag.String("haar-profile", "", "absolute path to the profile Haar XML")
 	flag.Parse()
 
-	token := os.Getenv("FENGSHEN_SHIM_TOKEN")
-	if len(token) < 32 {
-		log.Fatal("FENGSHEN_SHIM_TOKEN missing or too short")
-	}
 	host, _, err := net.SplitHostPort(*listen)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
 		log.Fatal("listen must be a loopback host:port")
@@ -39,7 +35,6 @@ func main() {
 	}
 	server, err := shim.New(shim.Config{
 		Mode:       *mode,
-		Token:      token,
 		Target:     *target,
 		WorkRoot:   *workDir,
 		FrontalXML: *frontal,

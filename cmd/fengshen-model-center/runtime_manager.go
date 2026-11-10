@@ -163,7 +163,7 @@ func (m *Manager) resolveRuntimeBinding(ctx context.Context, ref integration.Exe
 			}
 			if component.ID == "haar-consumer" {
 				// Haar runs in this process. A valid component copy alone cannot
-				// authenticate a different center's embedded implementation.
+				// stand in for a different center's embedded implementation.
 				executable, e := os.Executable()
 				if e != nil {
 					return out, errors.New("center_component_unverified")

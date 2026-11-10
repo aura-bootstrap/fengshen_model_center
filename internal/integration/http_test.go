@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 )
@@ -55,39 +54,5 @@ func TestSnapshotEvidenceLimits(t *testing.T) {
 	stale.FinishedAt = now.Add(-6 * time.Minute)
 	if e := validateSnapshot(&stale, now); e != nil || !stale.Stale {
 		t.Fatal("stale missing")
-	}
-}
-func TestHostReadOnlyDoesNotAcceptManagementToken(t *testing.T) {
-	h := &Host{now: time.Now, tokens: map[string]time.Time{}, desc: Descriptor{LoopbackAddress: "127.0.0.1:18120"}}
-	token, e := h.issue()
-	if e != nil {
-		t.Fatal(e)
-	}
-	req := httptest.NewRequest("GET", "http://127.0.0.1:18120"+HealthPath, nil)
-	req.Header.Set(ManagementHeader, token)
-	if h.AuthorizeReadOnly(req) {
-		t.Fatal("management header accepted")
-	}
-	req.Header.Del(ManagementHeader)
-	req.Header.Set(ReadOnlyHeader, token)
-	req.Method = "POST"
-	if h.AuthorizeReadOnly(req) {
-		t.Fatal("write method")
-	}
-	req.Method = "GET"
-	req.Header.Set("Sec-Fetch-Site", "same-site")
-	if h.AuthorizeReadOnly(req) {
-		t.Fatal("same-site accepted")
-	}
-	req.Header.Del("Sec-Fetch-Site")
-	req.Host = "localhost:18120"
-	if h.AuthorizeReadOnly(req) {
-		t.Fatal("host mismatch")
-	}
-}
-func TestFrameBounds(t *testing.T) {
-	var d Descriptor
-	if readFrame(strings.NewReader("\xff\xff\xff\xff"), &d) == nil {
-		t.Fatal("oversize frame")
 	}
 }

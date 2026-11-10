@@ -123,19 +123,18 @@ func (c *Client) Dashboard(ctx context.Context) (Dashboard, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var v Dashboard
-	h, e := c.connect(ctx, false)
+	h, e := c.connect(ctx)
 	if e != nil {
 		return v, e
 	}
 	if e = fetchLimited(ctx, h, DashboardPath, &v, 3*time.Second, MaxDashboardResponse); e == nil {
-		if v.InstanceID != h.Descriptor.InstanceID || v.Build != h.Build {
+		if v.InstanceID != h.InstanceID || v.Build != h.Build {
 			e = identityError(errors.New("dashboard_binding"))
 		} else {
 			e = validateDashboard(v)
 		}
 	}
 	if e != nil {
-		c.cache = cacheEntry{}
 		return Dashboard{}, e
 	}
 	return v, nil
@@ -148,19 +147,18 @@ func (c *Client) Report(ctx context.Context) (Report, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var v Report
-	h, e := c.connect(ctx, false)
+	h, e := c.connect(ctx)
 	if e != nil {
 		return v, e
 	}
 	if e = fetchLimited(ctx, h, ReportPath, &v, 3*time.Second, MaxDashboardResponse); e == nil {
-		if v.InstanceID != h.Descriptor.InstanceID || v.Build != h.Build {
+		if v.InstanceID != h.InstanceID || v.Build != h.Build {
 			e = identityError(errors.New("report_binding"))
 		} else {
 			e = validateReport(v)
 		}
 	}
 	if e != nil {
-		c.cache = cacheEntry{}
 		return Report{}, e
 	}
 	return v, nil
@@ -180,19 +178,18 @@ func (c *Client) ModelFiles(ctx context.Context, inventoryID, modelID, cursor st
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var v FilesPage
-	h, e := c.connect(ctx, false)
+	h, e := c.connect(ctx)
 	if e != nil {
 		return v, e
 	}
 	if e = fetchLimited(ctx, h, u.RequestURI(), &v, 3*time.Second, MaxDashboardResponse); e == nil {
-		if v.InstanceID != h.Descriptor.InstanceID || v.Build != h.Build {
+		if v.InstanceID != h.InstanceID || v.Build != h.Build {
 			e = identityError(errors.New("model_files_binding"))
 		} else {
 			e = validateFilesPage(v)
 		}
 	}
 	if e != nil {
-		c.cache = cacheEntry{}
 		return FilesPage{}, e
 	}
 	return v, nil

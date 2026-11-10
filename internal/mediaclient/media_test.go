@@ -199,9 +199,9 @@ func TestInvalidFrozenBindings(t *testing.T) {
 			case "duplicate":
 				bindings = append(bindings, b)
 			case "grant":
-				g.Permission = integration.PermissionReadOnly
+				g.Bindings = nil
 			}
-			if _, e := newClient(f, func() integration.SessionGrant { return g }, bindings, func(Receipt) error { return nil }, safefs.PersistParent); e == nil {
+			if _, e := newClient(f, func() integration.SessionScope { return g }, bindings, func(Receipt) error { return nil }, safefs.PersistParent); e == nil {
 				t.Fatal("accepted invalid frozen binding")
 			}
 		})

@@ -23,7 +23,7 @@ import (
 )
 
 type fakeTransport struct {
-	g                                integration.SessionGrant
+	g                                integration.SessionScope
 	b                                Binding
 	body                             integration.RuntimeBody
 	submits, uploads, cancels        int
@@ -155,11 +155,11 @@ func fixture(t *testing.T, scene string) (*Client, *fakeTransport, *[]Receipt) {
 		component = "haar-consumer"
 	}
 	b := Binding{integration.ExecutionBindingRef{Scene: scene, Revision: 1, SHA256: strings.Repeat("b", 64)}, integration.ExecutionComponentRef{ID: component, Version: "v1", ManifestSHA256: strings.Repeat("c", 64), Protocol: "test/v1"}}
-	g := integration.SessionGrant{SessionID: "session", TaskID: "task", InstanceID: "instance", Permission: integration.PermissionRuntime, Capabilities: []string{scene}, Bindings: []integration.ExecutionBindingRef{b.Binding}}
+	g := integration.SessionScope{SessionID: "session", TaskID: "task", InstanceID: "instance", Bindings: []integration.ExecutionBindingRef{b.Binding}}
 	f := &fakeTransport{g: g, outputs: map[string][]byte{}}
 	receipts := []Receipt{}
 	receiptPath := filepath.Join(t.TempDir(), "receipt.json")
-	c, e := newClient(f, func() integration.SessionGrant { return f.g }, []Binding{b}, func(r Receipt) error {
+	c, e := newClient(f, func() integration.SessionScope { return f.g }, []Binding{b}, func(r Receipt) error {
 		receipts = append(receipts, r)
 		raw, e := json.Marshal(r)
 		if e != nil {
@@ -478,9 +478,8 @@ func TestConstructorRejectsOtherScenes(t *testing.T) {
 	b := c.bindings["image.face"]
 	b.Binding.Scene = "highlight.score"
 	b.Component.ID = "llama-runtime"
-	f.g.Capabilities = []string{b.Binding.Scene}
 	f.g.Bindings = []integration.ExecutionBindingRef{b.Binding}
-	if _, e := newClient(f, func() integration.SessionGrant { return f.g }, []Binding{b}, func(Receipt) error { return nil }, safefs.PersistParent); e == nil {
+	if _, e := newClient(f, func() integration.SessionScope { return f.g }, []Binding{b}, func(Receipt) error { return nil }, safefs.PersistParent); e == nil {
 		t.Fatal("accepted unrelated scene")
 	}
 }

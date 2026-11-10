@@ -129,9 +129,9 @@ func minimalEnvironment(extra []string) ([]uint16, error) {
 	return utf16.Encode([]rune(strings.Join(entries, "\x00") + "\x00\x00")), nil
 }
 
-func launch(ctx context.Context, b VerifiedBinary, o Options, extraEnv []string) (*nativeProcess, *os.File, *os.File, *os.File, Identity, error) {
+func launch(ctx context.Context, b VerifiedBinary, o Options) (*nativeProcess, *os.File, *os.File, *os.File, Identity, error) {
 	var id Identity
-	environment, err := minimalEnvironment(extraEnv)
+	environment, err := minimalEnvironment(nil)
 	if err != nil {
 		return nil, nil, nil, nil, id, err
 	}

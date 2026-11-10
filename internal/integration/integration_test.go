@@ -2,15 +2,11 @@ package integration
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"log"
-	"net/http/httptest"
 	"regexp"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 )
 
 func TestDescriptorPhaseDiagnostics(t *testing.T) {
@@ -60,92 +56,9 @@ func TestLiteralLoopback(t *testing.T) {
 		}
 	}
 }
-func TestTokenLimitsAndIsolation(t *testing.T) {
-	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	h := &Host{now: func() time.Time { return now }, tokens: map[string]time.Time{}, desc: Descriptor{LoopbackAddress: "127.0.0.1:18120"}}
-	var token string
-	for i := 0; i < 32; i++ {
-		var e error
-		token, e = h.issue()
-		if e != nil {
-			t.Fatal(e)
-		}
-	}
-	if _, e := h.issue(); e == nil {
-		t.Fatal("unbounded sessions")
-	}
-	req := httptest.NewRequest("GET", "http://127.0.0.1:18120/api/integration/health", nil)
-	req.Header.Set(ReadOnlyHeader, token)
-	if !h.AuthorizeReadOnly(req) {
-		t.Fatal("valid token rejected")
-	}
-	for _, path := range []string{"/api/state", "/api/integration/health?x=1", "/api/integration/health/"} {
-		r := req.Clone(context.Background())
-		r.URL.Path = strings.Split(path, "?")[0]
-		if strings.Contains(path, "?") {
-			r.URL.RawQuery = "x=1"
-		}
-		if h.AuthorizeReadOnly(r) {
-			t.Fatal(path)
-		}
-	}
-	req.Header.Set("Origin", "http://evil.invalid")
-	if h.AuthorizeReadOnly(req) {
-		t.Fatal("origin")
-	}
-	req.Header.Del("Origin")
-	now = now.Add(60 * time.Second)
-	if h.AuthorizeReadOnly(req) {
-		t.Fatal("expired")
-	}
-	if _, e := h.issue(); e != nil {
-		t.Fatal(e)
-	}
-}
-func TestConcurrentTokenBound(t *testing.T) {
-	h := &Host{now: time.Now, tokens: map[string]time.Time{}}
-	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() { defer wg.Done(); h.issue() }()
-	}
-	wg.Wait()
-	if len(h.tokens) != 32 {
-		t.Fatal(len(h.tokens))
-	}
-}
-func TestIdentityCacheBinding(t *testing.T) {
-	a := processIdentity{PID: 1, Created: "a", Image: "x", FileID: "v:f", Size: 12, Modified: 3}
-	c := &Client{cache: cacheEntry{Identity: a, Expected: strings.Repeat("a", 64), Delivery: strings.Repeat("b", 64)}}
-	c.cfg.CenterSHA256 = c.cache.Expected
-	c.cfg.DeliverySHA256 = c.cache.Delivery
-	if !c.cached(a) {
-		t.Fatal("cache miss")
-	}
-	b := a
-	b.Created = "b"
-	if c.cached(b) {
-		t.Fatal("PID reuse")
-	}
-	b = a
-	b.FileID = "other"
-	if c.cached(b) {
-		t.Fatal("file replacement")
-	}
-	c.cfg.CenterSHA256 = strings.Repeat("c", 64)
-	if c.cached(a) {
-		t.Fatal("expected digest changed")
-	}
-}
 func TestNoCredentialsInDescriptor(t *testing.T) {
 	b, _ := json.Marshal(Descriptor{})
 	if strings.Contains(string(b), "token") {
 		t.Fatal(string(b))
-	}
-}
-func TestUntrustedInspectDoesNotHash(t *testing.T) {
-	c := &Client{cfg: Config{CenterSHA256: strings.Repeat("a", 64), DeliverySHA256: strings.Repeat("b", 64)}}
-	if c.cached(processIdentity{}) {
-		t.Fatal("first inspect must not trust empty cache")
 	}
 }

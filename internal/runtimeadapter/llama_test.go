@@ -105,10 +105,6 @@ func init() {
 			_, _ = io.WriteString(w, `{"status":"ok"}`)
 			return
 		}
-		if r.Header.Get("Authorization") != "Bearer "+os.Getenv("LLAMA_API_KEY") {
-			w.WriteHeader(401)
-			return
-		}
 		if helperServiceUnavailable.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = io.WriteString(w, `{"error":"raw-response-secret"}`)
@@ -356,7 +352,7 @@ func TestLlamaTransportNoRedirectOrProxy(t *testing.T) {
 
 func TestLlamaUsesSupervisorEnvironmentAPI(t *testing.T) {
 	s := &runtimeprocess.Supervisor{}
-	_, err := startLlama(context.Background(), s, runtimeprocess.VerifiedBinary{}, nil, strings.Repeat("a", 64))
+	_, err := startLlama(context.Background(), s, runtimeprocess.VerifiedBinary{}, nil)
 	if !errors.Is(err, runtimeprocess.ErrIdentity) {
 		t.Fatal(err)
 	}
@@ -1462,7 +1458,7 @@ func llamaDiagnosticOwnedPhase(t *testing.T, ctx context.Context, binary runtime
 		drains.Wait()
 	}()
 	started := time.Now()
-	process, err := startLlama(owned, &supervisor, binary, phaseArgs, key)
+	process, err := startLlama(owned, &supervisor, binary, phaseArgs)
 	if err != nil {
 		t.Logf("max_tokens=%d category=start_failed context=%s", maxTokens, llamaHarnessContextCategory(ctx, err))
 		return "start_failed"
@@ -2474,7 +2470,7 @@ func TestLlamaRealVisionDiagnostic(t *testing.T) {
 		}
 		drains.Wait()
 	}()
-	process, err := startLlama(ctx, &supervisor, binary, append(args, "--port", strconv.Itoa(port)), key)
+	process, err := startLlama(ctx, &supervisor, binary, append(args, "--port", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatal("category=start_failed")
 	}

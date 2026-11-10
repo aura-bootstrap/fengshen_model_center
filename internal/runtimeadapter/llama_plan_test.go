@@ -31,8 +31,8 @@ func llamaPlanWithCPU(r Resolved, vision bool, avx2 func() bool) (runtimeprocess
 	return b, args, nil
 }
 
-func startLlama(ctx context.Context, s *runtimeprocess.Supervisor, b runtimeprocess.VerifiedBinary, args []string, key string) (*runtimeprocess.Process, error) {
-	return s.StartLlama(ctx, b, runtimeprocess.Options{Args: args, MaxStdinBytes: 1, MaxStdoutBytes: 16 << 20, MaxStderrBytes: 16 << 20, BufferBytes: 4 << 20}, key)
+func startLlama(ctx context.Context, s *runtimeprocess.Supervisor, b runtimeprocess.VerifiedBinary, args []string) (*runtimeprocess.Process, error) {
+	return s.Start(ctx, b, runtimeprocess.Options{Args: args, MaxStdinBytes: 1, MaxStdoutBytes: 16 << 20, MaxStderrBytes: 16 << 20, BufferBytes: 4 << 20})
 }
 
 func llamaHTTP() *http.Client {

@@ -139,14 +139,12 @@ func TestRuntimeCompletionStreamValidation(t *testing.T) {
 	}
 }
 
-func TestRuntimeAckRouteIsExactAndRuntimeOnly(t *testing.T) {
-	for _, permission := range []SessionPermission{PermissionRuntime, PermissionManagement, PermissionReadOnly} {
-		for _, method := range []string{"GET", "POST", "PUT", "DELETE"} {
-			for _, suffix := range []string{"job/ack", "job/ack/", "job/ack/extra", "../ack", "job%2fother/ack"} {
-				want := permission == PermissionRuntime && method == "POST" && suffix == "job/ack"
-				if got := RuntimeRouteAllowed(permission, method, RuntimeJobsPath+"/"+suffix); got != want {
-					t.Fatalf("%s %s %s: got %v want %v", permission, method, suffix, got, want)
-				}
+func TestRuntimeAckRouteIsExact(t *testing.T) {
+	for _, method := range []string{"GET", "POST", "PUT", "DELETE"} {
+		for _, suffix := range []string{"job/ack", "job/ack/", "job/ack/extra", "../ack", "job%2fother/ack"} {
+			want := method == "POST" && suffix == "job/ack"
+			if got := RuntimeRouteAllowed(method, RuntimeJobsPath+"/"+suffix); got != want {
+				t.Fatalf("%s %s: got %v want %v", method, suffix, got, want)
 			}
 		}
 	}

@@ -167,19 +167,10 @@ func bindingErrorCode(code string) string {
 	}
 }
 
-// A session owns the trusted address and authentication. Tests implement this
-// boundary without constructing or forging native SessionCredentials.
-type BindingManagementSession interface {
-	Request(context.Context, string, string, []byte) (*http.Response, error)
-	Close(context.Context) error
-}
-type BindingManagementBoundary interface {
-	OpenBindingManagementSession(context.Context) (BindingManagementSession, error)
-}
-type BindingsClient struct{ boundary BindingManagementBoundary }
+type BindingsClient struct{ client *Client }
 
-func NewBindingsClient(boundary BindingManagementBoundary) *BindingsClient {
-	return &BindingsClient{boundary: boundary}
+func NewBindingsClient(c *Client) *BindingsClient {
+	return &BindingsClient{client: c}
 }
 func (c *BindingsClient) Bindings(ctx context.Context) (BindingSnapshot, error) {
 	return c.request(ctx, http.MethodGet, BindingsPath, nil)
@@ -205,12 +196,12 @@ func (c *BindingsClient) DeleteBinding(ctx context.Context, scene string, revisi
 }
 func (c *BindingsClient) request(ctx context.Context, method, path string, raw []byte) (BindingSnapshot, error) {
 	var out BindingSnapshot
-	if c == nil || c.boundary == nil {
+	if c == nil || c.client == nil {
 		return out, errors.New("center_session_invalid")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	session, err := c.boundary.OpenBindingManagementSession(ctx)
+	address, err := c.client.address(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
@@ -218,22 +209,33 @@ func (c *BindingsClient) request(ctx context.Context, method, path string, raw [
 		if errors.Is(err, ErrUnsupported) {
 			return out, ErrUnsupported
 		}
-		for _, code := range []string{"center_unbuilt", "center_missing", "center_port_conflict", "center_identity_mismatch", "center_identity_unconfirmed", "center_engine_untrusted", "center_session_denied"} {
+		for _, code := range []string{"center_unbuilt", "center_missing", "center_port_conflict", "center_identity_mismatch", "center_identity_unconfirmed"} {
 			if err.Error() == code || strings.HasPrefix(err.Error(), code+":") {
 				return out, errors.New(code)
 			}
 		}
 		return out, errors.New("center_identity_unconfirmed")
 	}
-	if session == nil {
+	base, err := canonical(address)
+	if err != nil {
 		return out, errors.New("center_session_invalid")
 	}
-	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = session.Close(closeCtx)
-	}()
-	response, err := session.Request(ctx, method, path, raw)
+	var body io.Reader
+	if raw != nil {
+		body = bytes.NewReader(raw)
+	}
+	r, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(base, "/")+path, body)
+	if err != nil {
+		return out, errors.New("center_request_invalid")
+	}
+	r.GetBody = nil // Never replay a write with an unknown outcome.
+	if raw != nil {
+		r.Header.Set("Content-Type", "application/json")
+	}
+	h := SessionHTTPClient(15 * time.Second)
+	h.Transport.(*http.Transport).DisableCompression = true
+	defer h.CloseIdleConnections()
+	response, err := h.Do(r)
 	if err != nil {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
@@ -269,54 +271,6 @@ func (c *BindingsClient) request(ctx context.Context, method, path string, raw [
 		return BindingSnapshot{}, errRuntimeInvalid
 	}
 	return out, nil
-}
-
-type nativeBindingManagementSession struct {
-	client      *Client
-	credentials *SessionCredentials
-	http        *http.Client
-}
-
-func (c *Client) OpenBindingManagementSession(ctx context.Context) (BindingManagementSession, error) {
-	credentials, err := c.OpenManagementSession(ctx)
-	if err != nil {
-		return nil, err
-	}
-	h := SessionHTTPClient(15 * time.Second)
-	h.Transport.(*http.Transport).DisableCompression = true
-	return &nativeBindingManagementSession{client: c, credentials: credentials, http: h}, nil
-}
-func (s *nativeBindingManagementSession) Request(ctx context.Context, method, path string, raw []byte) (*http.Response, error) {
-	if s.credentials.Grant().Permission != PermissionManagement || !RuntimeRouteAllowed(PermissionManagement, method, path) {
-		return nil, errors.New("center_session_denied")
-	}
-	s.credentials.mu.Lock()
-	address := s.credentials.descriptor.LoopbackAddress
-	s.credentials.mu.Unlock()
-	base, err := canonical(address)
-	if err != nil {
-		return nil, errors.New("center_session_invalid")
-	}
-	var body io.Reader
-	if raw != nil {
-		body = bytes.NewReader(raw)
-	}
-	r, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(base, "/")+path, body)
-	if err != nil {
-		return nil, errors.New("center_request_invalid")
-	}
-	r.GetBody = nil // Never replay a write with an unknown outcome.
-	if raw != nil {
-		r.Header.Set("Content-Type", "application/json")
-	}
-	if err = s.client.AuthenticateSessionRequest(s.credentials, r); err != nil {
-		return nil, err
-	}
-	return s.http.Do(r)
-}
-func (s *nativeBindingManagementSession) Close(ctx context.Context) error {
-	defer s.http.CloseIdleConnections()
-	return s.client.CloseRuntimeSession(ctx, s.credentials)
 }
 func (c *Client) Bindings(ctx context.Context) (BindingSnapshot, error) {
 	return NewBindingsClient(c).Bindings(ctx)

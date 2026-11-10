@@ -3,7 +3,6 @@ package runtimehttp
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
@@ -32,7 +31,7 @@ func TestAcknowledgeRequiresExplicitOwnedTerminalReceipt(t *testing.T) {
 	if err != nil || current.Acknowledged {
 		t.Fatal("read implicitly acknowledged result")
 	}
-	for _, change := range []string{"task", "session", "binding"} {
+	for _, change := range []string{"task", "session"} {
 		auth.mu.Lock()
 		saved := auth.grant
 		switch change {
@@ -40,8 +39,6 @@ func TestAcknowledgeRequiresExplicitOwnedTerminalReceipt(t *testing.T) {
 			auth.grant.TaskID = "other-task"
 		case "session":
 			auth.grant.SessionID = "other-session"
-		case "binding":
-			auth.grant.Bindings = []integration.ExecutionBindingRef{{Scene: "image.face", Revision: 2, SHA256: strings.Repeat("a", 64)}}
 		}
 		auth.mu.Unlock()
 		w := request(h, http.MethodPost, path+"/ack", "application/json", []byte(`{}`))

@@ -3,8 +3,6 @@ package shim
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -50,12 +48,6 @@ func (s *Server) startLlama(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, componentprotocol.Fail("component_failed"))
 		return
 	}
-	keyBytes := make([]byte, 32)
-	if _, err := rand.Read(keyBytes); err != nil {
-		writeError(w, http.StatusInternalServerError, componentprotocol.Fail("component_failed"))
-		return
-	}
-	key := hex.EncodeToString(keyBytes)
 	args := []string{
 		"--host", "127.0.0.1", "--offline", "--no-webui", "--no-warmup",
 		"--parallel", "1", "--ctx-size", "4096", "--n-gpu-layers", "0",
@@ -68,7 +60,7 @@ func (s *Server) startLlama(w http.ResponseWriter, r *http.Request) {
 	}
 	args = append(args, "--port", strconv.Itoa(port))
 	ctx, cancel := context.WithCancel(context.Background())
-	child, err := s.startChild(ctx, s.cfg.Target, args, Limits{In: 1, Out: 16 << 20, Err: 16 << 20, Buffer: 4 << 20}, map[string]string{"LLAMA_API_KEY": key})
+	child, err := s.startChild(ctx, s.cfg.Target, args, Limits{In: 1, Out: 16 << 20, Err: 16 << 20, Buffer: 4 << 20})
 	if err != nil {
 		cancel()
 		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
@@ -77,13 +69,13 @@ func (s *Server) startLlama(w http.ResponseWriter, r *http.Request) {
 	go func() { _, _ = io.Copy(io.Discard, child.Stdout()) }()
 	go func() { _, _ = io.Copy(io.Discard, child.Stderr()) }()
 	base := "http://127.0.0.1:" + strconv.Itoa(port)
-	if err := waitLlamaHealth(ctx, base, key); err != nil {
+	if err := waitLlamaHealth(ctx, base); err != nil {
 		_ = child.Close()
 		cancel()
 		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
 		return
 	}
-	s.llamaChild, s.llamaCancel, s.llamaBase, s.llamaKey, s.llamaStarted = child, cancel, base, key, true
+	s.llamaChild, s.llamaCancel, s.llamaBase, s.llamaStarted = child, cancel, base, true
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "protocol": componentprotocol.LlamaHTTPv1})
 }
 
@@ -106,7 +98,7 @@ func (s *Server) closeLlama() {
 		_ = s.llamaChild.Close()
 		s.llamaChild = nil
 	}
-	s.llamaBase, s.llamaKey, s.llamaStarted = "", "", false
+	s.llamaBase, s.llamaStarted = "", false
 }
 
 func (s *Server) llamaProxyHealth(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +106,7 @@ func (s *Server) llamaProxyHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.llamaMu.Lock()
-	base, key, started := s.llamaBase, s.llamaKey, s.llamaStarted
+	base, started := s.llamaBase, s.llamaStarted
 	s.llamaMu.Unlock()
 	if !started {
 		writeError(w, http.StatusServiceUnavailable, componentprotocol.Fail("component_failed"))
@@ -125,7 +117,6 @@ func (s *Server) llamaProxyHealth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
 		return
 	}
-	req.Header.Set("Authorization", "Bearer "+key)
 	resp, err := llamaUpstreamClient().Do(req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
@@ -145,7 +136,7 @@ func (s *Server) llamaProxyChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.llamaMu.Lock()
-	base, key, started := s.llamaBase, s.llamaKey, s.llamaStarted
+	base, started := s.llamaBase, s.llamaStarted
 	s.llamaMu.Unlock()
 	if !started {
 		writeError(w, http.StatusServiceUnavailable, componentprotocol.Fail("component_failed"))
@@ -161,7 +152,6 @@ func (s *Server) llamaProxyChat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
 		return
 	}
-	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := llamaUpstreamClient().Do(req)
 	if err != nil {
@@ -187,7 +177,7 @@ func (s *Server) llamaProxyChat(w http.ResponseWriter, r *http.Request) {
 // fake upstream without exposing arbitrary paths.
 func (s *Server) llamaProxyFixture(w http.ResponseWriter, r *http.Request) {
 	s.llamaMu.Lock()
-	base, key, started := s.llamaBase, s.llamaKey, s.llamaStarted
+	base, started := s.llamaBase, s.llamaStarted
 	s.llamaMu.Unlock()
 	if !started {
 		writeError(w, http.StatusServiceUnavailable, componentprotocol.Fail("component_failed"))
@@ -198,7 +188,6 @@ func (s *Server) llamaProxyFixture(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
 		return
 	}
-	req.Header.Set("Authorization", "Bearer "+key)
 	resp, err := llamaUpstreamClient().Do(req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
@@ -223,7 +212,7 @@ func freeLlamaPort() (int, error) {
 	return port, nil
 }
 
-func waitLlamaHealth(ctx context.Context, base, key string) error {
+func waitLlamaHealth(ctx context.Context, base string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -232,7 +221,6 @@ func waitLlamaHealth(ctx context.Context, base, key string) error {
 		hc, stop := context.WithTimeout(ctx, time.Second)
 		req, err := http.NewRequestWithContext(hc, http.MethodGet, base+"/health", nil)
 		if err == nil {
-			req.Header.Set("Authorization", "Bearer "+key)
 			resp, err := llamaUpstreamClient().Do(req)
 			ready := false
 			if err == nil {

@@ -23,20 +23,16 @@ import (
 )
 
 type testAuth struct {
-	mu     sync.Mutex
-	grant  integration.SessionGrant
-	denied bool
-	calls  int
+	mu    sync.Mutex
+	grant integration.SessionScope
 }
 
-func (a *testAuth) AuthorizeSession(r *http.Request, p integration.SessionPermission) (integration.SessionGrant, error) {
+var activeAuth *testAuth
+
+func (a *testAuth) snapshot() integration.SessionScope {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.calls++
-	if a.denied || p != integration.PermissionRuntime || r.Header.Get(integration.RuntimeHeader) != "secret" || r.Host != "127.0.0.1:1234" || r.Header.Get("Origin") != "" || r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" {
-		return integration.SessionGrant{}, errors.New("private W:/secret token")
-	}
-	return a.grant, nil
+	return a.grant
 }
 
 type fakeExecutor struct {
@@ -94,9 +90,10 @@ func setup(t *testing.T) (*Handler, *testAuth, *fakeExecutor, *atomic.Int32) {
 		t.Fatal(e)
 	}
 	b := integration.ExecutionBindingRef{Scene: "image.face", Revision: 1, SHA256: strings.Repeat("a", 64)}
-	auth := &testAuth{grant: integration.SessionGrant{Permission: integration.PermissionRuntime, SessionID: "session", TaskID: "task", Capabilities: []string{b.Scene}, Bindings: []integration.ExecutionBindingRef{b}}}
+	auth := &testAuth{grant: integration.SessionScope{SessionID: "session", TaskID: "task", Bindings: []integration.ExecutionBindingRef{b}}}
+	activeAuth = auth
 	checks := &atomic.Int32{}
-	h := newHandler(auth, store, jobs, func(context.Context, integration.ExecutionBindingRef, integration.ExecutionComponentRef) error {
+	h := newHandler(store, jobs, func(context.Context, integration.ExecutionBindingRef, integration.ExecutionComponentRef) error {
 		checks.Add(1)
 		return nil
 	})
@@ -106,7 +103,10 @@ func setup(t *testing.T) (*Handler, *testAuth, *fakeExecutor, *atomic.Int32) {
 }
 func request(h *Handler, method, path, typ string, b []byte) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, "http://127.0.0.1:1234"+path, bytes.NewReader(b))
-	r.Header.Set(integration.RuntimeHeader, "secret")
+	addSession(r)
+	g := activeAuth.snapshot()
+	r.Header.Set(integration.RuntimeSessionHeader, g.SessionID)
+	r.Header.Set(integration.RuntimeTaskHeader, g.TaskID)
 	if typ != "" {
 		r.Header.Set("Content-Type", typ)
 	}
@@ -114,6 +114,15 @@ func request(h *Handler, method, path, typ string, b []byte) *httptest.ResponseR
 	h.ServeHTTP(w, r)
 	return w
 }
+func addSession(r *http.Request) {
+	if activeAuth == nil {
+		return
+	}
+	g := activeAuth.snapshot()
+	r.Header.Set(integration.RuntimeSessionHeader, g.SessionID)
+	r.Header.Set(integration.RuntimeTaskHeader, g.TaskID)
+}
+
 func picture() []byte {
 	var b bytes.Buffer
 	_ = png.Encode(&b, image.NewRGBA(image.Rect(0, 0, 2, 2)))
@@ -215,7 +224,7 @@ func TestIdempotencyOwnershipAndValidation(t *testing.T) {
 		t.Fatal(w.Code, w.Body)
 	}
 	path := integration.RuntimeJobsPath + "/" + s.ID
-	for _, change := range []string{"task", "session", "binding"} {
+	for _, change := range []string{"task", "session"} {
 		a.mu.Lock()
 		saved := a.grant
 		switch change {
@@ -223,8 +232,6 @@ func TestIdempotencyOwnershipAndValidation(t *testing.T) {
 			a.grant.TaskID = "other"
 		case "session":
 			a.grant.SessionID = "other"
-		case "binding":
-			a.grant.Bindings = []integration.ExecutionBindingRef{{Scene: "image.face", Revision: 2, SHA256: strings.Repeat("a", 64)}}
 		}
 		a.mu.Unlock()
 		w = request(h, "GET", path, "", nil)
@@ -292,9 +299,9 @@ func TestUploadAndHeaders(t *testing.T) {
 			t.Fatal(tc.typ, w.Code, w.Body)
 		}
 	}
-	for _, tc := range []struct{ name, value string }{{"Content-Encoding", "gzip"}, {"Content-Disposition", "attachment; filename=x"}, {"Range", "bytes=0-"}, {"Last-Event-ID", "0"}, {"Origin", "http://evil"}, {"Authorization", "secret"}, {"Cookie", "secret"}} {
+	for _, tc := range []struct{ name, value string }{{"Content-Encoding", "gzip"}, {"Content-Disposition", "attachment; filename=x"}, {"Range", "bytes=0-"}, {"Last-Event-ID", "0"}} {
 		r := httptest.NewRequest("POST", "http://127.0.0.1:1234"+integration.RuntimeAssetsPath, bytes.NewReader(picture()))
-		r.Header.Set(integration.RuntimeHeader, "secret")
+		addSession(r)
 		r.Header.Set("Content-Type", "image/png")
 		r.Header.Set(tc.name, tc.value)
 		w := httptest.NewRecorder()
@@ -305,7 +312,7 @@ func TestUploadAndHeaders(t *testing.T) {
 	}
 	for _, n := range []int64{-1, 0, 8<<20 + 1, 1} {
 		r := httptest.NewRequest("POST", "http://127.0.0.1:1234"+integration.RuntimeAssetsPath, bytes.NewReader(picture()))
-		r.Header.Set(integration.RuntimeHeader, "secret")
+		addSession(r)
 		r.Header.Set("Content-Type", "image/png")
 		r.ContentLength = n
 		w := httptest.NewRecorder()
@@ -320,7 +327,7 @@ func TestUploadAndHeaders(t *testing.T) {
 		}
 	}
 	r := httptest.NewRequest("POST", "http://127.0.0.1:1234"+integration.RuntimeAssetsPath, bytes.NewReader(picture()))
-	r.Header.Set(integration.RuntimeHeader, "secret")
+	addSession(r)
 	r.Header["Content-Type"] = []string{"image/png", "image/jpeg"}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -342,7 +349,7 @@ func TestCancelDisconnectAndExpiry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	r := httptest.NewRequest("GET", "http://127.0.0.1:1234"+path+"/events", nil).WithContext(ctx)
-	r.Header.Set(integration.RuntimeHeader, "secret")
+	addSession(r)
 	h.ServeHTTP(httptest.NewRecorder(), r)
 	current, _ := h.jobs.Snapshot(s.SessionID, s.TaskID, s.ID)
 	if current.State.Terminal() {
@@ -392,7 +399,7 @@ func TestSSECursorAndPeriodicAuthorization(t *testing.T) {
 	path := integration.RuntimeJobsPath + "/" + s.ID + "/events"
 	for _, v := range []string{"0", "01", "+1", "-1", "18446744073709551616", ""} {
 		r := httptest.NewRequest("GET", "http://127.0.0.1:1234"+path, nil)
-		r.Header.Set(integration.RuntimeHeader, "secret")
+		addSession(r)
 		r.Header.Set("Last-Event-ID", v)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
@@ -405,13 +412,12 @@ func TestSSECursorAndPeriodicAuthorization(t *testing.T) {
 		}
 	}
 	r := httptest.NewRequest("GET", "http://127.0.0.1:1234"+path, nil)
-	r.Header.Set(integration.RuntimeHeader, "secret")
+	addSession(r)
 	r.Header.Set("Last-Event-ID", "2052")
+	r.Header.Set(integration.RuntimeSessionHeader, "other")
+	r.Header.Set(integration.RuntimeTaskHeader, "task")
 	done := make(chan struct{})
 	go func() { h.ServeHTTP(httptest.NewRecorder(), r); close(done) }()
-	a.mu.Lock()
-	a.denied = true
-	a.mu.Unlock()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -424,7 +430,6 @@ func TestSSECursorAndPeriodicAuthorization(t *testing.T) {
 }
 func TestMediaResultScope(t *testing.T) {
 	h, a, ex, _ := setup(t)
-	a.grant.Capabilities = []string{"timbre.convert"}
 	a.grant.Bindings[0].Scene = "timbre.convert"
 	ex.media = true
 	id := upload(t, h)
@@ -477,7 +482,7 @@ func TestFlushErrorStopsStream(t *testing.T) {
 	s := submit(t, h, payload(a, upload(t, h)))
 	<-ex.start
 	r := httptest.NewRequest("GET", "http://127.0.0.1:1234"+integration.RuntimeJobsPath+"/"+s.ID+"/events", nil)
-	r.Header.Set(integration.RuntimeHeader, "secret")
+	addSession(r)
 	w := &brokenFlusher{header: http.Header{}}
 	done := make(chan struct{})
 	go func() { h.ServeHTTP(w, r); close(done) }()
@@ -491,10 +496,15 @@ func TestFlushErrorStopsStream(t *testing.T) {
 		t.Fatal("flush cancelled job")
 	}
 }
-func TestNewFailsClosedWithoutHost(t *testing.T) {
-	h := New(nil, nil, nil, nil)
-	w := request(h, "POST", integration.RuntimeJobsPath, "application/json", []byte(`{}`))
-	if w.Code != 403 {
+func TestNewFailsClosedWithoutDependencies(t *testing.T) {
+	h := New(nil, nil, nil)
+	r := httptest.NewRequest("POST", "http://127.0.0.1:1234"+integration.RuntimeJobsPath, bytes.NewReader([]byte(`{}`)))
+	addSession(r)
+	r.Header.Set(integration.RuntimeSessionHeader, "session")
+	r.Header.Set(integration.RuntimeTaskHeader, "task")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 503 {
 		t.Fatal(w.Code)
 	}
 }

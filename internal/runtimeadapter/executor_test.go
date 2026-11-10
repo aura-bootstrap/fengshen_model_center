@@ -303,7 +303,6 @@ func helperControl(t *testing.T, session *shimSession, path string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Authorization", "Bearer "+session.client.Token())
 	resp, err := c.Do(req)
 	if err != nil {
 		t.Fatal(err)

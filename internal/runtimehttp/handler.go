@@ -1,4 +1,4 @@
-// Package runtimehttp transports authenticated runtime work; it owns no listener.
+// Package runtimehttp transports runtime work; it owns no listener.
 package runtimehttp
 
 import (
@@ -23,9 +23,6 @@ import (
 )
 
 type validator func(context.Context, integration.ExecutionBindingRef, integration.ExecutionComponentRef) error
-type authorizer interface {
-	AuthorizeSession(*http.Request, integration.SessionPermission) (integration.SessionGrant, error)
-}
 type receipt struct {
 	id      string
 	request []byte
@@ -41,8 +38,6 @@ const uploadTimeout = 2 * time.Minute
 // Handler must be reused for the lifetime of its dedicated jobs and assets stores.
 // Receipts are bounded and retained while the corresponding core job exists.
 type Handler struct {
-	auth     authorizer
-	host     *integration.Host
 	assets   *runtimeassets.Store
 	jobs     *runtimejobs.Manager
 	validate validator
@@ -55,18 +50,13 @@ type Handler struct {
 	recheck  time.Duration
 }
 
-// New always authenticates production requests through Host.AuthorizeSession.
-// validate is required and must recheck frozen binding and component identities.
-func New(host *integration.Host, assets *runtimeassets.Store, jobs *runtimejobs.Manager, validate func(context.Context, integration.ExecutionBindingRef, integration.ExecutionComponentRef) error) *Handler {
-	h := newHandler(host, assets, jobs, validate)
-	h.host = host
-	if host == nil {
-		h.auth = nil
-	}
-	return h
+// New validates frozen binding and component identities; requests are
+// unauthenticated local calls carrying only non-secret session/task IDs.
+func New(assets *runtimeassets.Store, jobs *runtimejobs.Manager, validate func(context.Context, integration.ExecutionBindingRef, integration.ExecutionComponentRef) error) *Handler {
+	return newHandler(assets, jobs, validate)
 }
-func newHandler(auth authorizer, assets *runtimeassets.Store, jobs *runtimejobs.Manager, validate validator) *Handler {
-	return &Handler{auth: auth, assets: assets, jobs: jobs, validate: validate, receipts: map[owner]map[string]receipt{}, inputs: map[string]owner{}, uploads: map[*uploadFlight]struct{}{}, revoked: map[string]bool{}, recheck: time.Second}
+func newHandler(assets *runtimeassets.Store, jobs *runtimejobs.Manager, validate validator) *Handler {
+	return &Handler{assets: assets, jobs: jobs, validate: validate, receipts: map[owner]map[string]receipt{}, inputs: map[string]owner{}, uploads: map[*uploadFlight]struct{}{}, revoked: map[string]bool{}, recheck: time.Second}
 }
 
 // CapabilityEvidence is a passive in-process view, not a runtime HTTP route.
@@ -113,15 +103,24 @@ func transportError(w http.ResponseWriter, err error) {
 		fail(w, 500, "center_transport_failed")
 	}
 }
-func (h *Handler) authorize(r *http.Request) (integration.SessionGrant, error) {
-	if h.auth == nil {
-		return integration.SessionGrant{}, errors.New("denied")
+func sessionFrom(r *http.Request) (integration.SessionScope, error) {
+	values := r.Header.Values(integration.RuntimeSessionHeader)
+	tasks := r.Header.Values(integration.RuntimeTaskHeader)
+	if len(values) != 1 || len(tasks) != 1 || !opaqueID(values[0]) || !opaqueID(tasks[0]) {
+		return integration.SessionScope{}, errors.New("denied")
 	}
-	g, e := h.auth.AuthorizeSession(r, integration.PermissionRuntime)
-	if e != nil || g.Permission != integration.PermissionRuntime || g.SessionID == "" || g.TaskID == "" {
-		return integration.SessionGrant{}, errors.New("denied")
+	return integration.SessionScope{SessionID: values[0], TaskID: tasks[0]}, nil
+}
+func opaqueID(s string) bool {
+	if len(s) == 0 || len(s) > 128 {
+		return false
 	}
-	return g, nil
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 func emptyBody(r *http.Request) bool {
 	if r.Body == nil {
@@ -133,12 +132,12 @@ func emptyBody(r *http.Request) bool {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	g, e := h.authorize(r)
+	g, e := sessionFrom(r)
 	if e != nil {
 		fail(w, 403, "center_session_denied")
 		return
 	}
-	if !integration.RuntimeRouteAllowed(integration.PermissionRuntime, r.Method, r.URL.Path) || r.URL.RawPath != "" || r.URL.RawQuery != "" || r.URL.ForceQuery || len(r.TransferEncoding) != 0 || len(r.Header.Values("Content-Length")) > 1 || len(r.Header.Values("Content-Encoding")) != 0 || len(r.Header.Values("Content-Disposition")) != 0 || len(r.Header.Values("Range")) != 0 || len(r.Header.Values("Last-Event-ID")) != 0 && !strings.HasSuffix(r.URL.Path, "/events") {
+	if !integration.RuntimeRouteAllowed(r.Method, r.URL.Path) || r.URL.RawPath != "" || r.URL.RawQuery != "" || r.URL.ForceQuery || len(r.TransferEncoding) != 0 || len(r.Header.Values("Content-Length")) > 1 || len(r.Header.Values("Content-Encoding")) != 0 || len(r.Header.Values("Content-Disposition")) != 0 || len(r.Header.Values("Range")) != 0 || len(r.Header.Values("Last-Event-ID")) != 0 && !strings.HasSuffix(r.URL.Path, "/events") {
 		fail(w, 400, "center_request_invalid")
 		return
 	}
@@ -147,23 +146,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 	if closed || h.jobs == nil || h.assets == nil || h.validate == nil {
 		fail(w, 503, "center_closed")
-		return
-	}
-	if r.URL.Path == integration.RuntimeSessionPath {
-		if !emptyBody(r) {
-			fail(w, 422, "center_request_invalid")
-			return
-		}
-		if h.host == nil {
-			fail(w, 403, "center_session_denied")
-			return
-		}
-		if e = h.host.DeleteSession(r); e != nil {
-			fail(w, 403, "center_session_denied")
-			return
-		}
-		h.ExpireSession(g)
-		w.WriteHeader(204)
 		return
 	}
 	if r.URL.Path == integration.RuntimeAssetsPath {
@@ -178,10 +160,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s, e := h.jobs.Snapshot(g.SessionID, g.TaskID, parts[0])
 	if e != nil {
 		transportError(w, e)
-		return
-	}
-	if !g.Allows(g.TaskID, s.Binding) {
-		fail(w, 403, "center_binding_forbidden")
 		return
 	}
 	if r.Method == "GET" && !emptyBody(r) {
@@ -248,7 +226,7 @@ func contentType(r *http.Request) string {
 	}
 	return v[0]
 }
-func (h *Handler) upload(w http.ResponseWriter, r *http.Request, g integration.SessionGrant) {
+func (h *Handler) upload(w http.ResponseWriter, r *http.Request, g integration.SessionScope) {
 	var k runtimeassets.Kind
 	var max int64
 	switch contentType(r) {
@@ -268,16 +246,6 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, g integration.S
 	}
 	if r.ContentLength > max {
 		fail(w, 413, "center_request_too_large")
-		return
-	}
-	allowed := false
-	for _, b := range g.Bindings {
-		if g.Allows(g.TaskID, b) {
-			allowed = true
-		}
-	}
-	if !allowed {
-		fail(w, 403, "center_binding_forbidden")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), uploadTimeout)
@@ -419,7 +387,7 @@ func strictObject(raw []byte, fields map[string]bool) error {
 	}
 	return nil
 }
-func (h *Handler) submit(w http.ResponseWriter, r *http.Request, g integration.SessionGrant) {
+func (h *Handler) submit(w http.ResponseWriter, r *http.Request, g integration.SessionScope) {
 	if contentType(r) != "application/json" {
 		fail(w, 415, "center_media_type_invalid")
 		return
@@ -450,10 +418,6 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request, g integration.S
 	body, e := runtimejobs.DecodeBody(req.Body)
 	if e != nil {
 		transportError(w, e)
-		return
-	}
-	if !g.Allows(g.TaskID, binding) {
-		fail(w, 403, "center_binding_forbidden")
 		return
 	}
 	// Canonical typed data matches the core's idempotency domain.
@@ -549,7 +513,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request, g integration.S
 	h.receipts[own][req.RequestID] = receipt{s.ID, canonical}
 	writeJSON(w, 202, s)
 }
-func (h *Handler) result(w http.ResponseWriter, r *http.Request, g integration.SessionGrant, s runtimejobs.Snapshot, id string) {
+func (h *Handler) result(w http.ResponseWriter, r *http.Request, g integration.SessionScope, s runtimejobs.Snapshot, id string) {
 	result, e := h.jobs.Result(g.SessionID, g.TaskID, s.ID)
 	if e != nil {
 		transportError(w, e)
@@ -582,7 +546,7 @@ func (h *Handler) result(w http.ResponseWriter, r *http.Request, g integration.S
 	}
 	fail(w, 404, "center_result_not_found")
 }
-func (h *Handler) events(w http.ResponseWriter, r *http.Request, g integration.SessionGrant, s runtimejobs.Snapshot) {
+func (h *Handler) events(w http.ResponseWriter, r *http.Request, g integration.SessionScope, s runtimejobs.Snapshot) {
 	var cursor uint64
 	values := r.Header.Values("Last-Event-ID")
 	if len(values) > 1 {
@@ -605,8 +569,8 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request, g integration.S
 	w.Header().Set("Content-Type", "text/event-stream")
 	controller := http.NewResponseController(w)
 	for {
-		fresh, err := h.authorize(r)
-		if err != nil || fresh.SessionID != g.SessionID || fresh.TaskID != g.TaskID || !fresh.Allows(g.TaskID, s.Binding) {
+		fresh, err := sessionFrom(r)
+		if err != nil || fresh.SessionID != g.SessionID || fresh.TaskID != g.TaskID {
 			return
 		}
 		for _, event := range events {
@@ -636,9 +600,9 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request, g integration.S
 	}
 }
 
-// ExpireSession is suitable for HostConfig.CancelSession. Work is revoked before
+// ExpireSession releases work owned by a session. Work is revoked before
 // its files are released, so late executors cannot publish a successful result.
-func (h *Handler) ExpireSession(g integration.SessionGrant) {
+func (h *Handler) ExpireSession(g integration.SessionScope) {
 	h.mu.Lock()
 	h.revoked[g.SessionID] = true
 	for f := range h.uploads {

@@ -1,7 +1,6 @@
 package integration
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -29,25 +28,28 @@ func TestRuntimeScenesAndAssets(t *testing.T) {
 	}
 }
 
-func TestRuntimePermissionMatrix(t *testing.T) {
-	for _, permission := range []SessionPermission{PermissionReadOnly, PermissionManagement, PermissionRuntime, "", "admin"} {
-		for _, path := range []string{RuntimeCapabilitiesPath, BindingsPath, "/api/bindings/highlight.score", RuntimeAssetsPath, RuntimeJobsPath, "/api/runtime/jobs/abc", "/api/runtime/jobs/abc/cancel", RuntimeSessionPath, ReportPath} {
-			for _, method := range []string{"GET", "POST", "PUT", "DELETE"} {
-				allowed := RuntimeRouteAllowed(permission, method, path)
-				want := permission == PermissionReadOnly && method == "GET" && path == RuntimeCapabilitiesPath ||
-					permission == PermissionManagement && (method == "GET" && path == BindingsPath || (method == "PUT" || method == "DELETE") && path == "/api/bindings/highlight.score") ||
-					permission == PermissionRuntime && (method == "POST" && (path == RuntimeAssetsPath || path == RuntimeJobsPath || path == "/api/runtime/jobs/abc/cancel") || method == "GET" && path == "/api/runtime/jobs/abc" || method == "DELETE" && path == RuntimeSessionPath)
-				if allowed != want {
-					t.Errorf("%q %s %s=%t want %t", permission, method, path, allowed, want)
-				}
-			}
-		}
-	}
-	for _, path := range []string{"/api/runtime/jobs/../abc", "/api/runtime/jobs/abc/", "/api/runtime/jobs/abc?token=x", "/api/runtime/jobs/abc/results/../../models", "/api/bindings/unknown"} {
-		for _, permission := range []SessionPermission{PermissionReadOnly, PermissionManagement, PermissionRuntime} {
-			if RuntimeRouteAllowed(permission, "GET", path) {
-				t.Fatalf("unsafe route accepted: %s", path)
-			}
+func TestRuntimeRouteWhitelist(t *testing.T) {
+	for _, tc := range []struct {
+		method, path string
+		want         bool
+	}{
+		{"POST", RuntimeAssetsPath, true},
+		{"POST", RuntimeJobsPath, true},
+		{"GET", RuntimeJobsPath + "/abc", true},
+		{"GET", RuntimeJobsPath + "/abc/events", true},
+		{"POST", RuntimeJobsPath + "/abc/cancel", true},
+		{"POST", RuntimeJobsPath + "/abc/ack", true},
+		{"GET", RuntimeJobsPath + "/abc/results/abc", true},
+		{"DELETE", RuntimeAssetsPath, false},
+		{"GET", RuntimeCapabilitiesPath, false},
+		{"GET", BindingsPath, false},
+		{"GET", "/api/runtime/jobs/../abc", false},
+		{"GET", "/api/runtime/jobs/abc/", false},
+		{"GET", "/api/runtime/jobs/abc?token=x", false},
+		{"GET", "/api/runtime/jobs/abc/results/../../models", false},
+	} {
+		if got := RuntimeRouteAllowed(tc.method, tc.path); got != tc.want {
+			t.Errorf("%s %s=%t want %t", tc.method, tc.path, got, tc.want)
 		}
 	}
 }
@@ -111,15 +113,8 @@ func TestCapabilityDoesNotInventInference(t *testing.T) {
 	}
 }
 
-func TestRuntimeProtocolDoesNotChangeReadOnlyReport(t *testing.T) {
-	raw, err := json.Marshal(handshakeRequest{Schema: 1, Protocol: Protocol, InstanceID: "i", RootKind: "development", RootIdentity: "r", DataIdentity: "d"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != `{"schema":1,"protocol":"fengshen.model-center.integration/v1","instance_id":"i","root_kind":"development","root_identity":"r","data_identity":"d"}` {
-		t.Fatalf("old handshake changed: %s", raw)
-	}
-	if RuntimeProtocol == Protocol || RuntimeHeader == ReadOnlyHeader {
-		t.Fatal("runtime reuses read-only identity")
+func TestRuntimeContextHeadersAreDistinct(t *testing.T) {
+	if RuntimeSessionHeader == RuntimeTaskHeader || RuntimeSessionHeader == "" || RuntimeTaskHeader == "" {
+		t.Fatal("runtime context headers invalid")
 	}
 }

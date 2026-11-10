@@ -557,16 +557,16 @@ func (e *Executor) scoreLocked(ctx context.Context, req runtimejobs.Request, res
 			return fail(err)
 		}
 	}
-	base, key := client.BaseURL(), client.Token()
+	base := client.BaseURL()
 	var events []*scoring.RawEvent
 	if vision {
-		c, ce := scoring.NewConstrainedLocalVisionClient(scoring.LocalVisionConfig{BaseURL: base + "/v1", APIKey: key, Model: "bound-model", TimeoutSec: scoring.MaxTimeoutSec, DisableRetries: true})
+		c, ce := scoring.NewConstrainedLocalVisionClient(scoring.LocalVisionConfig{BaseURL: base + "/v1", Model: "bound-model", TimeoutSec: scoring.MaxTimeoutSec, DisableRetries: true})
 		if ce != nil {
 			return fail(errors.New("center_request_invalid"))
 		}
 		events, err = c.ScoreEvents(runCtx, candidate)
 	} else {
-		c, ce := scoring.NewClient(scoring.Config{Provider: scoring.ProviderLocal, BaseURL: base + "/v1", APIKey: key, Model: "bound-model", TimeoutSec: scoring.MaxTimeoutSec, DisableRetries: true})
+		c, ce := scoring.NewClient(scoring.Config{Provider: scoring.ProviderLocal, BaseURL: base + "/v1", Model: "bound-model", TimeoutSec: scoring.MaxTimeoutSec, DisableRetries: true})
 		if ce != nil {
 			return fail(errors.New("center_request_invalid"))
 		}

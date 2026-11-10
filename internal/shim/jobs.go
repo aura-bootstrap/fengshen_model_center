@@ -227,7 +227,7 @@ func (s *Server) runJob(ctx context.Context, j *job, req componentprotocol.JobRe
 		})
 		return
 	}
-	child, err := s.startChild(ctx, s.cfg.Target, args, Limits{In: 1, Out: 4 << 20, Err: 4 << 20, Buffer: 4 << 20}, nil)
+	child, err := s.startChild(ctx, s.cfg.Target, args, Limits{In: 1, Out: 4 << 20, Err: 4 << 20, Buffer: 4 << 20})
 	if err != nil {
 		j.update(func(sn *componentprotocol.JobSnapshot) {
 			sn.State = componentprotocol.JobFailed

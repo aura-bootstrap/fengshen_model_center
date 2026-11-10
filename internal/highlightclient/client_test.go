@@ -22,11 +22,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/audio"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/scoring"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/transcript"
-	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
 )
 
 // These are transport contract tests, not model inference tests.
@@ -143,8 +143,8 @@ func setup(t *testing.T, scene, component string) (*Client, *fakeRuntime, *[]int
 	b := testBinding(scene, component)
 	f := &fakeRuntime{state: "succeeded", result: integration.RuntimeResult{Component: b.Component, Events: []*integration.RuntimeRawEvent{}}}
 	records := []integration.RuntimeSnapshot{}
-	g := integration.SessionGrant{SessionID: "session", TaskID: "task", Permission: integration.PermissionRuntime, Capabilities: []string{scene}, Bindings: []integration.ExecutionBindingRef{b.Binding}}
-	c, e := newClient(f, func() integration.SessionGrant { return g }, []Binding{b}, func(s integration.RuntimeSnapshot) error { records = append(records, s); return nil }, func(r integration.RuntimeCompletion) error {
+	g := integration.SessionScope{SessionID: "session", TaskID: "task", Bindings: []integration.ExecutionBindingRef{b.Binding}}
+	c, e := newClient(f, func() integration.SessionScope { return g }, []Binding{b}, func(s integration.RuntimeSnapshot) error { records = append(records, s); return nil }, func(r integration.RuntimeCompletion) error {
 		raw, e := json.Marshal(r)
 		if e != nil {
 			return e
@@ -211,13 +211,13 @@ func TestNewRejectsMissingSessionAndInvalidScope(t *testing.T) {
 	if _, e := New(nil, nil, nil, nil, nil); e == nil {
 		t.Fatal("accepted missing runtime/session")
 	}
-	if _, e := New(integration.NewRuntimeClient(nil), &integration.SessionCredentials{}, []Binding{testBinding("highlight.score", "llama-runtime")}, func(integration.RuntimeSnapshot) error { return nil }, nil); e == nil {
+	if _, e := New(integration.NewRuntimeClient(nil), &integration.RuntimeSessionHandle{}, []Binding{testBinding("highlight.score", "llama-runtime")}, func(integration.RuntimeSnapshot) error { return nil }, nil); e == nil {
 		t.Fatal("accepted empty credentials")
 	}
 	b := testBinding("highlight.score", "llama-runtime")
 	f := &fakeRuntime{}
-	for _, g := range []integration.SessionGrant{{}, {Permission: integration.PermissionManagement}, {Permission: integration.PermissionRuntime, TaskID: "task", Capabilities: []string{"highlight.score"}, Bindings: []integration.ExecutionBindingRef{testBinding("highlight.vision", "llama-runtime").Binding}}} {
-		if _, e := newClient(f, func() integration.SessionGrant { return g }, []Binding{b}, func(integration.RuntimeSnapshot) error { return nil }, nil); e == nil {
+	for _, g := range []integration.SessionScope{{}, {SessionID: "session"}, {SessionID: "session", TaskID: "task", Bindings: []integration.ExecutionBindingRef{testBinding("highlight.vision", "llama-runtime").Binding}}} {
+		if _, e := newClient(f, func() integration.SessionScope { return g }, []Binding{b}, func(integration.RuntimeSnapshot) error { return nil }, nil); e == nil {
 			t.Fatal("accepted unauthorized binding")
 		}
 	}
@@ -240,7 +240,7 @@ func TestCompletionRequiredAndFrozenSessionScope(t *testing.T) {
 		case "instance":
 			g.InstanceID = "other"
 		}
-		c.grant = func() integration.SessionGrant { return g }
+		c.grant = func() integration.SessionScope { return g }
 		if _, e := c.Scorer("highlight.score").ScoreEvents(context.Background(), candidate()); e == nil || len(f.calls) != 0 {
 			t.Fatal("scope changed", mode, e)
 		}

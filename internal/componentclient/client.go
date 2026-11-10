@@ -20,21 +20,20 @@ import (
 )
 
 type Client struct {
-	base  string
-	token string
-	http  *http.Client
+	base string
+	http *http.Client
 }
 
-func New(base, token string) (*Client, error) {
+func New(base string) (*Client, error) {
 	u, err := url.Parse(base)
 	if err != nil || u.Scheme != "http" || u.Path != "" || u.RawQuery != "" || u.Host == "" {
 		return nil, errors.New("component_base_invalid")
 	}
 	host, _, err := net.SplitHostPort(u.Host)
-	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() || len(token) < 32 {
+	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
 		return nil, errors.New("component_base_invalid")
 	}
-	return &Client{base: base, token: token, http: &http.Client{
+	return &Client{base: base, http: &http.Client{
 		Transport: &http.Transport{Proxy: nil, DisableKeepAlives: false, ForceAttemptHTTP2: false},
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -48,7 +47,6 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) (*htt
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -179,7 +177,6 @@ func (c *Client) Classify(ctx context.Context, contentType string, image []byte)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", contentType)
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -212,7 +209,6 @@ func responseError(resp *http.Response) error {
 }
 
 func (c *Client) BaseURL() string { return c.base }
-func (c *Client) Token() string   { return c.token }
 
 func (c *Client) StartLlama(ctx context.Context, req componentprotocol.LlamaStartRequest) error {
 	raw, err := json.Marshal(req)
@@ -244,7 +240,7 @@ func (c *Client) LlamaHealth(ctx context.Context) error {
 	return nil
 }
 
-// Stream is one authenticated WebSocket session. One connection carries exactly
+// Stream is one WebSocket session. One connection carries exactly
 // one center-side stream request.
 type Stream struct {
 	c *websocket.Conn
@@ -252,7 +248,7 @@ type Stream struct {
 
 func (c *Client) DialStream(ctx context.Context) (*Stream, error) {
 	wsURL := "ws" + strings.TrimPrefix(c.base, "http") + "/v1/stream"
-	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": []string{"Bearer " + c.token}}})
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
 	if err != nil {
 		return nil, err
 	}

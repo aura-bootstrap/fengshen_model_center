@@ -14,7 +14,7 @@ import (
 	"github.com/aura-bootstrap/fengshen_model_center/internal/registry"
 )
 
-func newHandler(manager *Manager, host string, trusted *integration.Host) http.Handler {
+func newHandler(manager *Manager, host string, integrationHost *integration.Host) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/report", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.RawQuery != "" || r.URL.ForceQuery {
@@ -126,23 +126,7 @@ func newHandler(manager *Manager, host string, trusted *integration.Host) http.H
 			return
 		}
 		if r.URL.Path == integration.BindingsPath || strings.HasPrefix(r.URL.Path, integration.BindingsPath+"/") {
-			if trusted == nil {
-				writeAPIError(w, failure("integration_denied", "可信管理会话无效", 403))
-				return
-			}
-			if _, err := trusted.AuthorizeSession(r, integration.PermissionManagement); err != nil {
-				writeAPIError(w, failure("integration_denied", "可信管理会话无效", 403))
-				return
-			}
 			serveBindingHTTP(manager, w, r)
-			return
-		}
-		if r.URL.Path == integration.RuntimeSessionPath || r.URL.Path == integration.SessionHeartbeatPath {
-			if trusted == nil {
-				writeAPIError(w, failure("integration_denied", "可信会话无效", 403))
-				return
-			}
-			trusted.ServeSessionHTTP(w, r)
 			return
 		}
 		if r.URL.Path == integration.RuntimeAssetsPath || r.URL.Path == integration.RuntimeJobsPath || strings.HasPrefix(r.URL.Path, integration.RuntimeJobsPath+"/") {
@@ -154,11 +138,11 @@ func newHandler(manager *Manager, host string, trusted *integration.Host) http.H
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/integration/") {
-			if trusted == nil || !trusted.AuthorizeReadOnly(r) {
-				writeAPIError(w, failure("integration_denied", "只读集成会话无效", 403))
+			if integrationHost == nil {
+				writeAPIError(w, failure("integration_unavailable", "只读集成未启用", 503))
 				return
 			}
-			trusted.ServeHTTP(w, r)
+			integrationHost.ServeHTTP(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {

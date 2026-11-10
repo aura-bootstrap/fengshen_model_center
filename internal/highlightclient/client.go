@@ -1,5 +1,5 @@
-// Package highlightclient adapts an already authorized engine task to the center.
-// The caller owns device/business authorization, session heartbeat and closure.
+// Package highlightclient adapts an engine task to the center.
+// The caller owns task preparation and lifecycle.
 // This package never opens a session, prepares media, or retries uncertain writes.
 package highlightclient
 
@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/scoring"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/scoring"
 )
 
 type Binding struct {
@@ -24,7 +24,7 @@ type Binding struct {
 }
 
 // The private receipt keeps transport injection independent of opaque runtime
-// credentials/jobs. Production receipts are created only by RuntimeClient.Submit.
+// session/jobs. Production receipts are created only by RuntimeClient.Submit.
 type job struct {
 	native   *integration.RuntimeJob
 	snapshot integration.RuntimeSnapshot
@@ -40,7 +40,7 @@ type runtimeTransport interface {
 }
 type sessionTransport struct {
 	runtime *integration.RuntimeClient
-	session *integration.SessionCredentials
+	session *integration.RuntimeSessionHandle
 }
 
 func (t sessionTransport) Upload(ctx context.Context, typ string, size int64, r io.Reader) (integration.RuntimeAsset, error) {
@@ -116,31 +116,31 @@ func newJobFailure(state integration.RuntimeState, code string) error {
 
 type Client struct {
 	transport               runtimeTransport
-	grant                   func() integration.SessionGrant
+	grant                   func() integration.SessionScope
 	bindings                map[string]Binding
 	record                  func(integration.RuntimeSnapshot) error
 	complete                func(integration.RuntimeCompletion) error
 	task, session, instance string
 }
 
-// New borrows an existing runtime session; it neither grants authorization nor
+// New borrows an existing runtime session; it neither creates scope nor
 // owns session shutdown. record must persist non-secret job receipts and may be
 // called concurrently when the caller runs multiple operations concurrently.
 // complete is required: it must durably store the entire owned result receipt in
 // the task's private directory before returning. It can contain private dialogue.
-func New(runtime *integration.RuntimeClient, session *integration.SessionCredentials, bindings []Binding, record func(integration.RuntimeSnapshot) error, complete func(integration.RuntimeCompletion) error) (*Client, error) {
+func New(runtime *integration.RuntimeClient, session *integration.RuntimeSessionHandle, bindings []Binding, record func(integration.RuntimeSnapshot) error, complete func(integration.RuntimeCompletion) error) (*Client, error) {
 	if runtime == nil || session == nil {
 		return nil, errors.New("center_session_invalid")
 	}
-	return newClient(sessionTransport{runtime, session}, session.Grant, bindings, record, complete)
+	return newClient(sessionTransport{runtime, session}, session.Scope, bindings, record, complete)
 }
 func bindingKey(scene, component string) string { return scene + "/" + component }
-func newClient(transport runtimeTransport, grant func() integration.SessionGrant, bindings []Binding, record func(integration.RuntimeSnapshot) error, complete func(integration.RuntimeCompletion) error) (*Client, error) {
+func newClient(transport runtimeTransport, grant func() integration.SessionScope, bindings []Binding, record func(integration.RuntimeSnapshot) error, complete func(integration.RuntimeCompletion) error) (*Client, error) {
 	if transport == nil || grant == nil || record == nil || complete == nil || len(bindings) == 0 {
 		return nil, errInput
 	}
 	g := grant()
-	if g.SessionID == "" || g.TaskID == "" || g.Permission != integration.PermissionRuntime {
+	if g.SessionID == "" || g.TaskID == "" {
 		return nil, errors.New("center_session_denied")
 	}
 	c := &Client{transport: transport, grant: grant, bindings: make(map[string]Binding), record: record, complete: complete, task: g.TaskID, session: g.SessionID, instance: g.InstanceID}

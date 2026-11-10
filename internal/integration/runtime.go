@@ -9,24 +9,17 @@ import (
 )
 
 const (
-	DemucsCLIProtocol       = domain.CenterDemucsCLIProtocol
-	SeedVCCLIProtocol       = domain.CenterSeedVCCLIProtocol
-	RuntimeProtocol         = "fengshen.model-center.runtime/v1"
-	RuntimeHeader           = "X-Model-Center-Runtime-Token"
-	ManagementHeader        = "X-Model-Center-Management-Token"
+	DemucsCLIProtocol = domain.CenterDemucsCLIProtocol
+	SeedVCCLIProtocol = domain.CenterSeedVCCLIProtocol
+	RuntimeProtocol   = "fengshen.model-center.runtime/v1"
+
+	// Session and task headers are non-secret routing identifiers, not credentials.
+	RuntimeSessionHeader    = "X-Model-Center-Session-ID"
+	RuntimeTaskHeader       = "X-Model-Center-Task-ID"
 	RuntimeCapabilitiesPath = "/api/integration/runtime-capabilities"
 	BindingsPath            = "/api/bindings"
 	RuntimeAssetsPath       = "/api/runtime/assets"
 	RuntimeJobsPath         = "/api/runtime/jobs"
-	RuntimeSessionPath      = "/api/runtime/sessions/current"
-)
-
-type SessionPermission string
-
-const (
-	PermissionReadOnly   SessionPermission = "read_only"
-	PermissionManagement SessionPermission = "management"
-	PermissionRuntime    SessionPermission = "runtime"
 )
 
 type SceneDefinition struct {
@@ -69,29 +62,7 @@ func opaqueRuntimeID(id string) bool {
 	return true
 }
 
-func RuntimeRouteAllowed(permission SessionPermission, method, path string) bool {
-	if permission == PermissionReadOnly {
-		return method == "GET" && path == RuntimeCapabilitiesPath
-	}
-	if permission == PermissionManagement {
-		if method == "GET" && path == BindingsPath {
-			return true
-		}
-		if method != "PUT" && method != "DELETE" {
-			return false
-		}
-		if !strings.HasPrefix(path, BindingsPath+"/") {
-			return false
-		}
-		_, ok := RuntimeScene(strings.TrimPrefix(path, BindingsPath+"/"))
-		return ok
-	}
-	if permission != PermissionRuntime {
-		return false
-	}
-	if path == RuntimeSessionPath {
-		return method == "DELETE"
-	}
+func RuntimeRouteAllowed(method, path string) bool {
 	if path == RuntimeAssetsPath || path == RuntimeJobsPath {
 		return method == "POST"
 	}

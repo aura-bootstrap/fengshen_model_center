@@ -4,12 +4,10 @@ package shim
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -30,7 +28,6 @@ const (
 
 type Config struct {
 	Mode       string
-	Token      string
 	Target     string
 	WorkRoot   string
 	FrontalXML string
@@ -55,7 +52,6 @@ type Server struct {
 	llamaChild   Child
 	llamaCancel  context.CancelFunc
 	llamaBase    string
-	llamaKey     string
 	llamaStarted bool
 }
 
@@ -64,9 +60,6 @@ func New(cfg Config) (*Server, error) {
 	case ModeWhisperStream, ModeWhisperBatch, ModeTimbre, ModeHaar, ModeLlama:
 	default:
 		return nil, errors.New("shim_mode_invalid")
-	}
-	if len(cfg.Token) < 32 {
-		return nil, errors.New("shim_token_invalid")
 	}
 	if !filepath.IsAbs(cfg.WorkRoot) {
 		return nil, errors.New("shim_workroot_invalid")
@@ -119,7 +112,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /fixture/", s.llamaProxyFixture)
 		mux.HandleFunc("POST /fixture/", s.llamaProxyFixture)
 	}
-	return s.authorize(mux)
+	return mux
 }
 
 func (s *Server) Close() error {
@@ -144,37 +137,6 @@ func (s *Server) Close() error {
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "mode": s.cfg.Mode})
-}
-
-func (s *Server) authorize(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !loopback(r.RemoteAddr) {
-			writeError(w, http.StatusForbidden, componentprotocol.Fail("component_auth"))
-			return
-		}
-		for _, h := range []string{"Proxy-Authorization", "Cookie", "Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-IP"} {
-			if len(r.Header.Values(h)) != 0 {
-				writeError(w, http.StatusForbidden, componentprotocol.Fail("component_auth"))
-				return
-			}
-		}
-		values := r.Header.Values("Authorization")
-		want := "Bearer " + s.cfg.Token
-		if len(values) != 1 || subtle.ConstantTimeCompare([]byte(values[0]), []byte(want)) != 1 {
-			writeError(w, http.StatusForbidden, componentprotocol.Fail("component_auth"))
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func loopback(remote string) bool {
-	host, _, err := net.SplitHostPort(remote)
-	if err != nil {
-		return false
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Server) requireMode(w http.ResponseWriter, modes ...string) bool {

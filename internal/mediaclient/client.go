@@ -1,5 +1,5 @@
 // Package mediaclient consumes media capabilities in an existing trusted task
-// session. The engine owns authorization, media preparation and session lifetime.
+// session. The engine owns media preparation and session lifetime.
 package mediaclient
 
 import (
@@ -51,7 +51,7 @@ type runtimeTransport interface {
 }
 type sessionTransport struct {
 	runtime *integration.RuntimeClient
-	session *integration.SessionCredentials
+	session *integration.RuntimeSessionHandle
 }
 
 func (t sessionTransport) Upload(ctx context.Context, typ string, n int64, r io.Reader) (integration.RuntimeAsset, error) {
@@ -95,7 +95,7 @@ var (
 
 type Client struct {
 	transport               runtimeTransport
-	grant                   func() integration.SessionGrant
+	grant                   func() integration.SessionScope
 	task, session, instance string
 	bindings                map[string]Binding
 	record                  func(Receipt) error
@@ -103,26 +103,26 @@ type Client struct {
 	persistOutput           func(string) error
 }
 
-// New borrows credentials; it never opens, heartbeats or closes a session.
+// New borrows a session handle; it never opens, heartbeats or closes a session.
 // record is required and must durably store Completion before returning. It must
 // be safe for concurrent operations. Its argument is an owned copy, so persistence
 // cannot mutate the admitted request or result. persistOutput must flush every
 // directory entry through the engine-owned task root after the WAV is synced.
-func New(runtime *integration.RuntimeClient, session *integration.SessionCredentials, bindings []Binding, record func(Receipt) error, persistOutput func(string) error) (*Client, error) {
+func New(runtime *integration.RuntimeClient, session *integration.RuntimeSessionHandle, bindings []Binding, record func(Receipt) error, persistOutput func(string) error) (*Client, error) {
 	if runtime == nil || session == nil {
 		return nil, errScope
 	}
-	return newClient(sessionTransport{runtime, session}, session.Grant, bindings, record, persistOutput)
+	return newClient(sessionTransport{runtime, session}, session.Scope, bindings, record, persistOutput)
 }
 func allowed(scene string) bool {
 	return scene == "timbre.separate" || scene == "timbre.convert" || scene == "image.face"
 }
-func newClient(t runtimeTransport, grant func() integration.SessionGrant, bindings []Binding, record func(Receipt) error, persistOutput func(string) error) (*Client, error) {
+func newClient(t runtimeTransport, grant func() integration.SessionScope, bindings []Binding, record func(Receipt) error, persistOutput func(string) error) (*Client, error) {
 	if t == nil || grant == nil || record == nil || persistOutput == nil || len(bindings) == 0 {
 		return nil, errInput
 	}
 	g := grant()
-	if g.Permission != integration.PermissionRuntime || g.TaskID == "" || g.SessionID == "" {
+	if g.TaskID == "" || g.SessionID == "" {
 		return nil, errScope
 	}
 	c := &Client{transport: t, grant: grant, task: g.TaskID, session: g.SessionID, instance: g.InstanceID, bindings: map[string]Binding{}, record: record, syncOutput: (*os.File).Sync, persistOutput: persistOutput}

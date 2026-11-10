@@ -1,5 +1,5 @@
 // Package runtimejobs owns bounded asynchronous work, not authentication, media
-// files or OS processes. Callers must authorize sessions/assets and verify frozen
+// files or OS processes. Callers pass session/task ownership and verify frozen
 // binding identities before Submit. Executor must stop and join all work it owns
 // before returning; implementations must never adopt external processes.
 package runtimejobs

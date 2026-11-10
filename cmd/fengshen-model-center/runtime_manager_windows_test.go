@@ -227,7 +227,7 @@ func TestRuntimeCapabilitiesProjectJobEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer jobs.Close()
-	m.runtimeHandler = runtimehttp.New(nil, nil, jobs, nil)
+	m.runtimeHandler = runtimehttp.New(nil, jobs, nil)
 	defer func() { m.runtimeHandler = nil }()
 	m.beforeScan = func(context.Context) { t.Fatal("passive capability query scanned") }
 	get := func() integration.RuntimeCapability {

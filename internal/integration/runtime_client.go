@@ -26,7 +26,7 @@ const runtimeResultLimit = 4 << 20
 var ErrRuntimeEventCursorExpired = errors.New("center_event_cursor_expired")
 var errRuntimeInvalid = errors.New("center_result_invalid")
 
-// RuntimeHTTPError deliberately retains no server text, request URL or credentials.
+// RuntimeHTTPError deliberately retains no server text, request URL or secrets.
 type RuntimeHTTPError struct {
 	Status int
 	Code   string
@@ -37,7 +37,7 @@ func (e *RuntimeHTTPError) Is(target error) bool {
 	return target == ErrRuntimeEventCursorExpired && e.Status == 410 && e.Code == ErrRuntimeEventCursorExpired.Error()
 }
 
-// RuntimeClient uses only credentials established by an explicit authorized task.
+// RuntimeClient uses a non-secret task scope established by the caller.
 // It never opens sessions, retries writes, or cancels a job on connection loss.
 type RuntimeClient struct {
 	client *Client
@@ -52,37 +52,18 @@ func NewRuntimeClient(c *Client) *RuntimeClient {
 }
 func (c *RuntimeClient) CloseIdleConnections() { c.http.CloseIdleConnections() }
 
-// RuntimeSessionAddress returns the live authenticated literal-loopback address,
-// without a token. It is for assembling an engine's in-memory task session only.
-func (c *Client) RuntimeSessionAddress(s *SessionCredentials) (string, error) {
+// RuntimeSessionAddress returns the live literal-loopback center address.
+func (c *Client) RuntimeSessionAddress(s *RuntimeSessionHandle) (string, error) {
 	if c == nil || s == nil {
 		return "", errors.New("center_session_invalid")
 	}
-	s.mu.Lock()
-	address := s.descriptor.LoopbackAddress
-	s.mu.Unlock()
-	base, e := canonical(address)
-	if e != nil {
-		return "", e
-	}
-	r, e := http.NewRequest("POST", base[:len(base)-1]+SessionHeartbeatPath, nil)
-	if e != nil {
-		return "", e
-	}
-	if e = c.AuthenticateSessionRequest(s, r); e != nil {
-		return "", e
-	}
-	return address, nil
+	return c.address(context.Background())
 }
-func (c *RuntimeClient) request(ctx context.Context, s *SessionCredentials, method, path string, body io.Reader, n int64, typ string, cursor string) (*http.Response, error) {
+func (c *RuntimeClient) request(ctx context.Context, s *RuntimeSessionHandle, method, path string, body io.Reader, n int64, typ string, cursor string) (*http.Response, error) {
 	if c == nil || c.client == nil || c.http == nil || s == nil {
 		return nil, errors.New("center_session_invalid")
 	}
-	g := s.Grant()
-	if g.Permission != PermissionRuntime {
-		return nil, errors.New("center_session_denied")
-	}
-	address, e := c.client.RuntimeSessionAddress(s)
+	address, e := c.client.address(ctx)
 	if e != nil {
 		return nil, e
 	}
@@ -100,7 +81,7 @@ func (c *RuntimeClient) request(ctx context.Context, s *SessionCredentials, meth
 	if cursor != "" {
 		r.Header.Set("Last-Event-ID", cursor)
 	}
-	if e = c.client.AuthenticateSessionRequest(s, r); e != nil {
+	if e = c.client.SetSessionHeaders(s, r); e != nil {
 		return nil, e
 	}
 	response, e := c.http.Do(r)
@@ -408,7 +389,7 @@ type RuntimeAsset struct {
 }
 
 // RuntimeJob is an opaque, immutable local receipt binding all subsequent reads
-// to the admitted request. Persist only its Snapshot, never SessionCredentials.
+// to the admitted request. Persist only its Snapshot, never RuntimeSessionHandle.
 type RuntimeJob struct {
 	snapshot RuntimeSnapshot
 	body     RuntimeBody
@@ -872,14 +853,14 @@ func runtimeShape(raw []byte, t reflect.Type, nullable bool, depth int) error {
 	return nil
 }
 
-func runtimeScope(s *SessionCredentials, b ExecutionBindingRef) bool {
-	return s != nil && s.Grant().Allows(s.Grant().TaskID, b)
+func runtimeScope(s *RuntimeSessionHandle, b ExecutionBindingRef) bool {
+	return s != nil && s.Scope().Allows(s.Scope().TaskID, b)
 }
-func runtimeSnapshotValid(v RuntimeSnapshot, s *SessionCredentials, old *RuntimeSnapshot) bool {
+func runtimeSnapshotValid(v RuntimeSnapshot, s *RuntimeSessionHandle, old *RuntimeSnapshot) bool {
 	if s == nil {
 		return false
 	}
-	g := s.Grant()
+	g := s.Scope()
 	if !opaqueRuntimeID(v.ID) || !opaqueRuntimeID(v.RequestID) || v.SessionID != g.SessionID || v.TaskID != g.TaskID || !g.Allows(v.TaskID, v.Binding) || !digestValid(v.BodySHA256) || !runtimeStateValid(v.State) || !safeCode(v.Code) || v.CreatedAt.IsZero() || v.Cursor == 0 {
 		return false
 	}
@@ -897,11 +878,11 @@ func runtimeSnapshotValid(v RuntimeSnapshot, s *SessionCredentials, old *Runtime
 
 // Submit never replays an uncertain write. Keep requestID/body and explicitly
 // resubmit only after the caller decides to resolve admission uncertainty.
-func (c *RuntimeClient) Submit(ctx context.Context, s *SessionCredentials, requestID string, binding ExecutionBindingRef, body RuntimeBody) (*RuntimeJob, error) {
+func (c *RuntimeClient) Submit(ctx context.Context, s *RuntimeSessionHandle, requestID string, binding ExecutionBindingRef, body RuntimeBody) (*RuntimeJob, error) {
 	if !opaqueRuntimeID(requestID) || !runtimeScope(s, binding) || !body.validate(binding.Scene) {
 		return nil, errors.New("center_request_invalid")
 	}
-	task := s.Grant().TaskID
+	task := s.Scope().TaskID
 	if body.Score != nil && body.Score.TaskID != "" && body.Score.TaskID != task || body.Vision != nil && body.Vision.Candidate.TaskID != "" && body.Vision.Candidate.TaskID != task {
 		return nil, errors.New("center_asset_forbidden")
 	}
@@ -941,8 +922,8 @@ func (c *RuntimeClient) Submit(ctx context.Context, s *SessionCredentials, reque
 }
 
 // Resume binds a persisted, non-secret receipt to a newly verified same-session
-// credential. The server currently owns jobs by SessionID, not TaskID alone.
-func (c *RuntimeClient) Resume(s *SessionCredentials, snapshot RuntimeSnapshot, body RuntimeBody) (*RuntimeJob, error) {
+// session. The server currently owns jobs by SessionID, not TaskID alone.
+func (c *RuntimeClient) Resume(s *RuntimeSessionHandle, snapshot RuntimeSnapshot, body RuntimeBody) (*RuntimeJob, error) {
 	if !runtimeSnapshotValid(snapshot, s, nil) || !body.validate(snapshot.Binding.Scene) {
 		return nil, errRuntimeInvalid
 	}
@@ -964,7 +945,7 @@ func (c *RuntimeClient) Resume(s *SessionCredentials, snapshot RuntimeSnapshot, 
 	}
 	return &RuntimeJob{snapshot, owned}, nil
 }
-func (c *RuntimeClient) jobSnapshot(ctx context.Context, s *SessionCredentials, j *RuntimeJob, cancel bool) (RuntimeSnapshot, error) {
+func (c *RuntimeClient) jobSnapshot(ctx context.Context, s *RuntimeSessionHandle, j *RuntimeJob, cancel bool) (RuntimeSnapshot, error) {
 	if j == nil || !runtimeSnapshotValid(j.snapshot, s, nil) {
 		return RuntimeSnapshot{}, errRuntimeInvalid
 	}
@@ -991,16 +972,16 @@ func (c *RuntimeClient) jobSnapshot(ctx context.Context, s *SessionCredentials, 
 	}
 	return v, nil
 }
-func (c *RuntimeClient) Query(ctx context.Context, s *SessionCredentials, j *RuntimeJob) (RuntimeSnapshot, error) {
+func (c *RuntimeClient) Query(ctx context.Context, s *RuntimeSessionHandle, j *RuntimeJob) (RuntimeSnapshot, error) {
 	return c.jobSnapshot(ctx, s, j, false)
 }
-func (c *RuntimeClient) Cancel(ctx context.Context, s *SessionCredentials, j *RuntimeJob) (RuntimeSnapshot, error) {
+func (c *RuntimeClient) Cancel(ctx context.Context, s *RuntimeSessionHandle, j *RuntimeJob) (RuntimeSnapshot, error) {
 	return c.jobSnapshot(ctx, s, j, true)
 }
 
 // Acknowledge is explicit: callers must durably persist the complete result first.
 // An unknown response never triggers a retry or a new model submission.
-func (c *RuntimeClient) Acknowledge(ctx context.Context, s *SessionCredentials, j *RuntimeJob) (RuntimeSnapshot, error) {
+func (c *RuntimeClient) Acknowledge(ctx context.Context, s *RuntimeSessionHandle, j *RuntimeJob) (RuntimeSnapshot, error) {
 	if j == nil || !runtimeSnapshotValid(j.snapshot, s, nil) {
 		return RuntimeSnapshot{}, errRuntimeInvalid
 	}
@@ -1079,7 +1060,7 @@ func (r RuntimeCompletion) Validate() error {
 	return nil
 }
 
-func (c *RuntimeClient) Result(ctx context.Context, s *SessionCredentials, j *RuntimeJob) (RuntimeResult, error) {
+func (c *RuntimeClient) Result(ctx context.Context, s *RuntimeSessionHandle, j *RuntimeJob) (RuntimeResult, error) {
 	snap, e := c.Query(ctx, s, j)
 	if e != nil {
 		return RuntimeResult{}, e
@@ -1139,7 +1120,7 @@ func (r *runtimeUploadReader) Read(p []byte) (int, error) {
 	}
 	return n, e
 }
-func (c *RuntimeClient) Upload(ctx context.Context, s *SessionCredentials, contentType string, size int64, src io.Reader) (RuntimeAsset, error) {
+func (c *RuntimeClient) Upload(ctx context.Context, s *RuntimeSessionHandle, contentType string, size int64, src io.Reader) (RuntimeAsset, error) {
 	limit := int64(8 << 20)
 	kind := "image"
 	switch contentType {
@@ -1150,7 +1131,7 @@ func (c *RuntimeClient) Upload(ctx context.Context, s *SessionCredentials, conte
 	default:
 		return RuntimeAsset{}, errors.New("center_media_type_invalid")
 	}
-	if size <= 0 || size > limit || src == nil || s == nil || s.Grant().Permission != PermissionRuntime || len(s.Grant().Bindings) == 0 {
+	if size <= 0 || size > limit || src == nil || s == nil || len(s.Scope().Bindings) == 0 {
 		return RuntimeAsset{}, errors.New("center_request_invalid")
 	}
 	reader := &runtimeUploadReader{ctx: ctx, src: src, left: size, sum: sha256.New()}
@@ -1183,7 +1164,7 @@ func (c *RuntimeClient) Upload(ctx context.Context, s *SessionCredentials, conte
 
 // Events consumes exactly one connection, starting after cursor. An EOF is not
 // proof of job success; query the snapshot/result. Callback errors stop reading.
-func (c *RuntimeClient) Events(ctx context.Context, s *SessionCredentials, j *RuntimeJob, cursor uint64, emit func(RuntimeEvent) error) error {
+func (c *RuntimeClient) Events(ctx context.Context, s *RuntimeSessionHandle, j *RuntimeJob, cursor uint64, emit func(RuntimeEvent) error) error {
 	if j == nil || emit == nil || !runtimeSnapshotValid(j.snapshot, s, nil) {
 		return errRuntimeInvalid
 	}
@@ -1297,7 +1278,7 @@ func runtimeReadEvents(ctx context.Context, src io.Reader, cursor uint64, emit f
 // DownloadWAV writes only a validated result from this job. dst must be a new,
 // caller-owned task file: on any error discard its partial bytes. No paths are
 // accepted or created here. The whole WAV is validated with bounded memory.
-func (c *RuntimeClient) DownloadWAV(ctx context.Context, s *SessionCredentials, j *RuntimeJob, resultID string, dst io.Writer) error {
+func (c *RuntimeClient) DownloadWAV(ctx context.Context, s *RuntimeSessionHandle, j *RuntimeJob, resultID string, dst io.Writer) error {
 	if dst == nil || !opaqueRuntimeID(resultID) {
 		return errRuntimeInvalid
 	}

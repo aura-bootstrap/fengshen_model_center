@@ -4,8 +4,8 @@
   "server_entry": "internal/llama-server.exe",
   "transport": "http-literal-loopback-no-proxy-no-redirect",
   "port": "supervisor allocates a new exclusive port; never 11434; never reuse external service",
-  "authentication": "fresh random 256-bit internal key in LLAMA_API_KEY child environment only; never center runtime token; never argv/log/report",
-  "environment": "supervisor builds a minimal environment; reject inherited LLAMA_*, HF_*, proxy variables and backend search paths; add only internal LLAMA_API_KEY",
+  "authentication": "none: the server is bound to 127.0.0.1 and accepts unauthenticated local calls",
+  "environment": "supervisor builds a minimal environment; reject inherited LLAMA_*, HF_*, proxy variables and backend search paths",
   "fixed_arguments": ["--host", "127.0.0.1", "--offline", "--no-webui", "--no-warmup", "--parallel", "1", "--ctx-size", "4096", "--n-gpu-layers", "0", "--threads", "4", "--no-mmproj-offload"],
   "binding_arguments": {
     "--port": "validated exclusive non-11434 port",
@@ -17,8 +17,8 @@
   "ownership": "supervisor must verify image/hash/create-time and own Windows kill-on-close job; cancel only its own process tree",
   "api": {
     "health": "GET /health (readiness only, not authentication or identity proof)",
-    "text": "POST /v1/chat/completions with Bearer internal key; bounded typed request/response",
+    "text": "POST /v1/chat/completions without authorization; bounded typed request/response",
     "vision": "POST /v1/chat/completions with text and bounded local image data URL; no remote image URL"
   },
-  "evidence": "metadata smoke is not inference, authenticated server startup, adapter integration, or clean-machine validation"
+  "evidence": "metadata smoke is not inference, server startup, adapter integration, or clean-machine validation"
 }

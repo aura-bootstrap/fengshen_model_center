@@ -248,7 +248,7 @@ foreach ($id in @('whisper-batch','whisper-stream','llama-runtime')) {
     }
     $nativeBuild = Join-Path $Output ($id + '-native-build')
     if ($inputPath -notmatch '^[A-Za-z]:[\\/]' -or -not (Test-Path -LiteralPath $inputPath)) { throw 'Native offline input must be an existing absolute path.' }
-    if (-not $Output.StartsWith('W:\QoderCN\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Native builds require a new output under W:/QoderCN.' }
+    if (-not $Output.StartsWith('W:\QoderCN', [StringComparison]::OrdinalIgnoreCase)) { throw 'Native builds require a new output under W:/QoderCN.' }
     Assert-Inputs
     $shell = (Get-Process -Id $PID).Path
     if ($id -eq 'whisper-batch') {
@@ -289,8 +289,7 @@ $exe = Join-Path $Output 'model-center\fengshen-model-center.exe'
 $manifest = Join-Path $centerDir 'manifest.json'
 $centerSHA = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
 $deliverySHA = (Get-FileHash (Join-Path $Output 'model-center\delivery.json') -Algorithm SHA256).Hash.ToLower()
-$injection = "-X github.com/aura-bootstrap/fengshen_model_center/integration.CenterSHA256=$centerSHA -X github.com/aura-bootstrap/fengshen_model_center/integration.DeliverySHA256=$deliverySHA"
-JsonFile (Join-Path $Output 'engine-build-inputs.json') @{schema=1; executable_relative='model-center/fengshen-model-center.exe'; executable_sha256=$centerSHA; manifest_sha256=(Get-FileHash $manifest -Algorithm SHA256).Hash.ToLower(); delivery_sha256=$deliverySHA; ldflags=$injection; dev_ldflags=($injection + ' -X fengshen-slicer/internal/build.Flavor=internal'); inference='not_tested'}
+JsonFile (Join-Path $Output 'engine-build-inputs.json') @{schema=1; executable_relative='model-center/fengshen-model-center.exe'; executable_sha256=$centerSHA; manifest_sha256=(Get-FileHash $manifest -Algorithm SHA256).Hash.ToLower(); delivery_sha256=$deliverySHA; inference='not_tested'}
 if ($BuildEngines) {
     $engineResults = @()
     foreach ($edition in @('admin','dev','user')) {
@@ -308,8 +307,8 @@ if ($BuildEngines) {
             New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
             Copy-Item (Join-Path $Output $file.path) $target
         }
-        $flags = $injection
-        if ($edition -eq 'dev') { $flags += ' -X fengshen-slicer/internal/build.Flavor=internal' }
+        $flags = ''
+        if ($edition -eq 'dev') { $flags = '-X fengshen-slicer/internal/build.Flavor=internal' }
         Run $go @('-C', $backend, 'test', '-count=1', './cmd/fengshen-engine')
         Run $go @('-C', $backend, 'vet', './cmd/fengshen-engine')
         Run $go @('-C', $backend, 'build', '-trimpath', '-buildvcs=false', '-ldflags', $flags, '-o', (Join-Path $engineRoot 'fengshen-engine.exe'), './cmd/fengshen-engine')
@@ -317,21 +316,8 @@ if ($BuildEngines) {
         Run $go @('-C', $module, 'run', './cmd/build', '-mode', 'delivery', '-root', $engineRoot)
         $copiedSHA = (Get-FileHash (Join-Path $engineRoot 'model-center\delivery.json') -Algorithm SHA256).Hash.ToLower()
         if ($copiedSHA -cne $deliverySHA) { throw 'Copied engine resource delivery digest mismatch.' }
-        $engineResults += @{edition=$edition; build='built'; test='passed'; vet='passed'; executable_sha256=(Get-FileHash (Join-Path $engineRoot 'fengshen-engine.exe') -Algorithm SHA256).Hash.ToLower(); center_sha256=$centerSHA; delivery_sha256=$deliverySHA; ldflags=$flags; startup_test='not_tested'; inference='not_tested'}
+        $engineResults += @{edition=$edition; build='built'; test='passed'; vet='passed'; executable_sha256=(Get-FileHash (Join-Path $engineRoot 'fengshen-engine.exe') -Algorithm SHA256).Hash.ToLower(); center_sha256=$centerSHA; delivery_sha256=$deliverySHA; startup_test='not_tested'; inference='not_tested'}
         JsonFile (Join-Path $Output 'engine-build-results.json') $engineResults
-    }
-    # Trust is post-build only: never include it in delivery or feed it into ldflags.
-    # Each install root contains only its own final engine.
-    $trustResults = @()
-    foreach ($edition in @('admin','dev','user')) {
-        Assert-Inputs
-        $engineRoot = Join-Path $Output ('engines\' + $edition)
-        $trustEdition = if ($edition -eq 'dev') { 'developer' } else { $edition }
-        $trustTemplate = Join-Path $Output ($edition + '-engine-trust.template.json')
-        JsonFile $trustTemplate @{schema=1; engines=@(@{inputpath='fengshen-engine.exe'; edition=$trustEdition; management=($edition -ne 'user')})}
-        Run $go @('-C', $module, 'run', './cmd/build', '-mode', 'engine-trust', '-root', $engineRoot, '-template', $trustTemplate, '-center-sha256', $centerSHA, '-delivery-sha256', $deliverySHA)
-        $trustResults += @{edition=$edition; build='built'; path='model-center/engine-trust.json'; sha256=(Get-FileHash (Join-Path $engineRoot 'model-center\engine-trust.json') -Algorithm SHA256).Hash.ToLower(); center_sha256=$centerSHA; delivery_sha256=$deliverySHA; inference='not_tested'}
-        JsonFile (Join-Path $Output 'engine-trust-build-results.json') $trustResults
     }
 }
 Assert-Inputs

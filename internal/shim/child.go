@@ -29,10 +29,10 @@ type Child interface {
 // StartChild spawns one already validated legacy component. The shim never
 // accepts a caller supplied argument vector; callers build it from fixed
 // templates in this package.
-type StartChild func(ctx context.Context, target string, args []string, lim Limits, env map[string]string) (Child, error)
+type StartChild func(ctx context.Context, target string, args []string, lim Limits) (Child, error)
 
 func processLauncher() StartChild {
-	return func(ctx context.Context, target string, args []string, lim Limits, env map[string]string) (Child, error) {
+	return func(ctx context.Context, target string, args []string, lim Limits) (Child, error) {
 		if !ordinaryFile(target) || !strings.EqualFold(filepath.Ext(target), ".exe") {
 			return nil, errors.New("shim_target_invalid")
 		}

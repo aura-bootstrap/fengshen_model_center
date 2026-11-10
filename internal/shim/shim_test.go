@@ -24,47 +24,10 @@ import (
 	"github.com/coder/websocket"
 )
 
-const testToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-func authHeader() http.Header {
-	return http.Header{"Authorization": []string{"Bearer " + testToken}}
-}
-
-func TestAuthBoundary(t *testing.T) {
-	s, err := New(Config{Mode: ModeWhisperBatch, Token: testToken, Target: fakeExe(t), WorkRoot: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	handler := s.Handler()
-	cases := []struct {
-		name    string
-		remote  string
-		headers http.Header
-		want    int
-	}{
-		{"ok", "127.0.0.1:5000", authHeader(), 200},
-		{"missing", "127.0.0.1:5000", http.Header{}, 403},
-		{"non-loopback", "10.0.0.1:5000", authHeader(), 403},
-		{"proxy header", "127.0.0.1:5000", http.Header{"Authorization": []string{"Bearer " + testToken}, "X-Forwarded-For": []string{"10.0.0.1"}}, 403},
-		{"duplicate", "127.0.0.1:5000", http.Header{"Authorization": []string{"Bearer " + testToken, "Bearer " + testToken}}, 403},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest("GET", "/healthz", nil)
-			r.RemoteAddr = tc.remote
-			r.Header = tc.headers
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, r)
-			if w.Code != tc.want {
-				t.Fatalf("status=%d want=%d body=%s", w.Code, tc.want, w.Body.String())
-			}
-		})
-	}
-}
+func authHeader() http.Header { return http.Header{} }
 
 func TestJobLifecycle(t *testing.T) {
-	start := func(ctx context.Context, target string, args []string, lim Limits, env map[string]string) (Child, error) {
+	start := func(ctx context.Context, target string, args []string, lim Limits) (Child, error) {
 		out := ""
 		for i := 0; i+1 < len(args); i++ {
 			if args[i] == "-of" {
@@ -76,7 +39,7 @@ func TestJobLifecycle(t *testing.T) {
 		}
 		return &fakeChild{wait: func() error { return os.WriteFile(out+".json", []byte(`{"ok":true}`), 0600) }}, nil
 	}
-	s, err := New(Config{Mode: ModeWhisperBatch, Token: testToken, Target: fakeExe(t), WorkRoot: t.TempDir(), StartChild: start})
+	s, err := New(Config{Mode: ModeWhisperBatch, Target: fakeExe(t), WorkRoot: t.TempDir(), StartChild: start})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,10 +111,10 @@ func TestJobLifecycle(t *testing.T) {
 }
 
 func TestStreamBridge(t *testing.T) {
-	start := func(ctx context.Context, target string, args []string, lim Limits, env map[string]string) (Child, error) {
+	start := func(ctx context.Context, target string, args []string, lim Limits) (Child, error) {
 		return newEchoChild(), nil
 	}
-	s, err := New(Config{Mode: ModeWhisperStream, Token: testToken, Target: fakeExe(t), WorkRoot: t.TempDir(), StartChild: start})
+	s, err := New(Config{Mode: ModeWhisperStream, Target: fakeExe(t), WorkRoot: t.TempDir(), StartChild: start})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +155,7 @@ func TestStreamBridge(t *testing.T) {
 }
 
 func TestHaarClassify(t *testing.T) {
-	s, err := New(Config{Mode: ModeHaar, Token: testToken, WorkRoot: t.TempDir(), FrontalXML: haarXML(t, "haarcascade_frontalface_default.xml"), ProfileXML: haarXML(t, "haarcascade_profileface.xml")})
+	s, err := New(Config{Mode: ModeHaar, WorkRoot: t.TempDir(), FrontalXML: haarXML(t, "haarcascade_frontalface_default.xml"), ProfileXML: haarXML(t, "haarcascade_profileface.xml")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +284,7 @@ func haarXML(t *testing.T, name string) string {
 }
 
 func TestLlamaShimStartProxyStop(t *testing.T) {
-	start := func(ctx context.Context, target string, args []string, lim Limits, env map[string]string) (Child, error) {
+	start := func(ctx context.Context, target string, args []string, lim Limits) (Child, error) {
 		port := 0
 		for i := 0; i+1 < len(args); i++ {
 			if args[i] == "--port" {
@@ -331,7 +294,6 @@ func TestLlamaShimStartProxyStop(t *testing.T) {
 		if port == 0 {
 			return nil, fmt.Errorf("missing --port")
 		}
-		key := env["LLAMA_API_KEY"]
 		listener, err := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(port))
 		if err != nil {
 			return nil, err
@@ -341,17 +303,13 @@ func TestLlamaShimStartProxyStop(t *testing.T) {
 			_, _ = w.Write([]byte(`{"status":"ok"}`))
 		})
 		mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("Authorization") != "Bearer "+key {
-				w.WriteHeader(401)
-				return
-			}
 			_, _ = w.Write([]byte(`{"ok":true}`))
 		})
 		srv := &http.Server{Handler: mux}
 		go func() { _ = srv.Serve(listener) }()
 		return &fakeLlamaChild{srv: srv}, nil
 	}
-	s, err := New(Config{Mode: ModeLlama, Token: testToken, Target: fakeExe(t), WorkRoot: t.TempDir(), StartChild: start})
+	s, err := New(Config{Mode: ModeLlama, Target: fakeExe(t), WorkRoot: t.TempDir(), StartChild: start})
 	if err != nil {
 		t.Fatal(err)
 	}

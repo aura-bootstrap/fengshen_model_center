@@ -1,5 +1,5 @@
 // Package runtimeassets owns bounded, task-scoped runtime media. It performs no
-// authentication: callers must authenticate task/session before invoking it.
+// ownership: callers must pass their task/session before invoking it.
 package runtimeassets
 
 import (

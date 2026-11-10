@@ -44,9 +44,7 @@ type Delivery struct {
 }
 
 func main() {
-	mode := flag.String("mode", "", "manifest, delivery, engine-trust, or verify-lock")
-	centerSHA := flag.String("center-sha256", "", "trusted center digest for engine-trust")
-	deliverySHA := flag.String("delivery-sha256", "", "trusted delivery digest for engine-trust")
+	mode := flag.String("mode", "", "manifest, delivery, or verify-lock")
 	root := flag.String("root", "", "absolute controlled output/input root")
 	template := flag.String("template", "", "manifest template or lock path")
 	engines := flag.Bool("engines", false, "include all three engine input graphs")
@@ -68,8 +66,6 @@ func main() {
 		}
 	case "delivery":
 		err = delivery(ctx, *root)
-	case "engine-trust":
-		err = engineTrust(ctx, *root, *template, *centerSHA, *deliverySHA)
 	case "snapshot", "verify-snapshot":
 		err = snapshot(ctx, *root, *output, *engines, *mode == "verify-snapshot")
 	case "seal-lock":

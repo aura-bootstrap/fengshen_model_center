@@ -1,5 +1,6 @@
-// Package integration implements authenticated local model-center discovery.
-// Descriptors are hints, never credentials or proof of process identity.
+// Package integration implements local model-center discovery.
+// Descriptors are non-secret hints; process identity is checked only for
+// liveness, never as a credential.
 package integration
 
 import (
@@ -19,7 +20,6 @@ import (
 const (
 	Protocol             = "fengshen.model-center.integration/v1"
 	Product              = "fengshen-model-center"
-	ReadOnlyHeader       = "X-Model-Center-Integration-Token"
 	HealthPath           = "/api/integration/health"
 	DependenciesPath     = "/api/integration/dependencies"
 	DashboardPath        = "/api/integration/dashboard"
@@ -31,13 +31,7 @@ const (
 	MaxResponse          = 256 * 1024
 )
 
-// These values may be injected into client builds using -ldflags -X.
-// Empty values deliberately disable trusted discovery and launch.
-var CenterSHA256 string
-var DeliverySHA256 string
-
-var ErrUnsupported = errors.New("center_platform_unsupported: 当前平台不支持可信中心集成")
-var ErrUnconfirmed = errors.New("center_identity_unconfirmed: 请点击打开中心以确认构建身份")
+var ErrUnsupported = errors.New("center_platform_unsupported: 当前平台不支持中心集成")
 
 // Config is trusted engine configuration, never HTTP/user form input.
 // InstallRoot contains model-center/fengshen-model-center.exe,
@@ -45,12 +39,10 @@ var ErrUnconfirmed = errors.New("center_identity_unconfirmed: 请点击打开中
 // DataDir must be a separate private integration directory, NOT registry data.
 // Root is passed to the center as -root; RootKind is development or installed.
 type Config struct {
-	InstallRoot    string
-	Root           string
-	RootKind       string
-	DataDir        string
-	CenterSHA256   string
-	DeliverySHA256 string
+	InstallRoot string
+	Root        string
+	RootKind    string
+	DataDir     string
 }
 
 type Descriptor struct {
@@ -59,7 +51,7 @@ type Descriptor struct {
 	PID              uint32 `json:"pid"`
 	ProcessStartedAt string `json:"process_started_at"`
 	LoopbackAddress  string `json:"loopback_address"`
-	PipeName         string `json:"pipe_name"`
+	Build            string `json:"build"`
 	RootKind         string `json:"root_kind"`
 	RootIdentity     string `json:"root_identity"`
 	DataIdentity     string `json:"data_identity"`
@@ -156,22 +148,6 @@ type FilesPage struct {
 	Build      string          `json:"build"`
 	Files      json.RawMessage `json:"files"`
 	NextCursor string          `json:"next_cursor"`
-}
-
-type handshakeRequest struct {
-	Schema       int    `json:"schema"`
-	Protocol     string `json:"protocol"`
-	InstanceID   string `json:"instance_id"`
-	RootKind     string `json:"root_kind"`
-	RootIdentity string `json:"root_identity"`
-	DataIdentity string `json:"data_identity"`
-}
-type handshakeResponse struct {
-	Schema     int        `json:"schema"`
-	Protocol   string     `json:"protocol"`
-	Build      string     `json:"build"`
-	Descriptor Descriptor `json:"descriptor"`
-	Token      string     `json:"token"`
 }
 
 func randomID() (string, error) {

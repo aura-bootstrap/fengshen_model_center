@@ -31,7 +31,7 @@ func resolveStartupRoot(root, kind string) (string, error) {
 	return scope.Path(), nil
 }
 
-// The component copy authenticates this center's embedded implementation, not a separate worker.
+// The component copy must match this center's embedded implementation, not a separate worker.
 func writeHaarComponentInfo(w io.Writer) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"schema": 1, "component_id": "haar-consumer", "version": buildVersion, "os": runtime.GOOS, "arch": runtime.GOARCH, "packaging": "go", "protocols": []string{"haar/v1"}, "embedded": true, "inference": "not_tested"})
 }

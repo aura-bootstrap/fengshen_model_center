@@ -12,15 +12,14 @@ func (c *Client) RuntimeCapabilities(ctx context.Context) (RuntimeCapabilities, 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var v RuntimeCapabilities
-	h, e := c.connect(ctx, false)
+	h, e := c.connect(ctx)
 	if e != nil {
 		return v, e
 	}
 	if e = fetchLimited(ctx, h, RuntimeCapabilitiesPath, &v, 3*time.Second, MaxResponse); e == nil {
-		e = validateRuntimeCapabilities(v, h.Descriptor.InstanceID, h.Build)
+		e = validateRuntimeCapabilities(v, h.InstanceID, h.Build)
 	}
 	if e != nil {
-		c.cache = cacheEntry{}
 		return RuntimeCapabilities{}, e
 	}
 	return v, nil

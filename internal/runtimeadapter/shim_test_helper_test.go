@@ -2,8 +2,6 @@ package runtimeadapter
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"io"
 	"net/http/httptest"
 	"os"
@@ -28,15 +26,9 @@ func newShimTestExecutor(t *testing.T, store *runtimeassets.Store) *Executor {
 func inProcessShimLauncher(t *testing.T) shimLauncher {
 	t.Helper()
 	return func(ctx context.Context, mode, target, frontal, profile string) (*shimSession, error) {
-		tokenBytes := make([]byte, 32)
-		if _, err := rand.Read(tokenBytes); err != nil {
-			t.Fatal(err)
-		}
-		token := hex.EncodeToString(tokenBytes)
 		work := t.TempDir()
 		srv, err := shim.New(shim.Config{
 			Mode:             mode,
-			Token:            token,
 			Target:           target,
 			WorkRoot:         work,
 			FrontalXML:       frontal,
@@ -48,7 +40,7 @@ func inProcessShimLauncher(t *testing.T) shimLauncher {
 			return nil, err
 		}
 		ts := httptest.NewServer(srv.Handler())
-		client, err := componentclient.New(ts.URL, token)
+		client, err := componentclient.New(ts.URL)
 		if err != nil {
 			ts.Close()
 			_ = srv.Close()
@@ -65,12 +57,9 @@ type execChild struct {
 	stderr io.ReadCloser
 }
 
-func execTestChild(ctx context.Context, target string, args []string, lim shim.Limits, env map[string]string) (shim.Child, error) {
+func execTestChild(ctx context.Context, target string, args []string, lim shim.Limits) (shim.Child, error) {
 	cmd := exec.CommandContext(ctx, target, args...)
 	cmd.Env = os.Environ()
-	for name, value := range env {
-		cmd.Env = append(cmd.Env, name+"="+value)
-	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
