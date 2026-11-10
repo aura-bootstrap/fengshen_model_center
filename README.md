@@ -43,6 +43,7 @@
 │  ├─ safefs/                   # Windows 安全文件系统边界
 │  ├─ shim/                     # shim 的 HTTP/WS 服务与旧协议桥
 │  └─ upstream/                 # 复制自 generation_server 的依赖闭包（非测试源码）
+├─ tests/livecheck/             # 运行实例的全模型/API 深检工具
 ├─ scripts/                     # 一键构建、bin 平铺安装、启动/停止与测试
 ├─ build/                       # 本地构建产物（gitignore，不随仓库）
 ├─ bin/                         # 本地可运行部署目录（gitignore，不随仓库）
@@ -170,14 +171,15 @@ scripts\test.bat -MinFirstPartyCoverage 80 -MinPackageCoverage 50
 
 1. `go vet ./...`；
 2. `go test -count=1 -covermode=atomic ./...`，不使用测试结果缓存；
-3. 排除 `internal/upstream/`（复制依赖闭包）后的第一方覆盖率门禁；
+3. 排除 `internal/upstream/`（复制依赖闭包）与 `tests/livecheck`（测试工具）后的第一方覆盖率门禁；
 4. 每个有测试的 Go 包单独覆盖率门禁；
 5. 生成 `build\full-test\coverage.html`；
 6. 构建契约；
 7. 检查 `bin\` 中已安装的中心与 shim（需先执行 `scripts\install.bat center`）；
-8. 读取 `%USERPROFILE%\.fengshen\model_center.pid`；若进程不存在则调用 `scripts\run.bat` 启动并重读 PID，然后通过 `/api/state`、`/api/report`、`/api/components` 做进程健康测试。
+8. 读取 `%USERPROFILE%\.fengshen\model_center.pid`；若进程不存在则调用 `scripts\run.bat` 启动并重读 PID，然后通过 `/api/state`、`/api/report`、`/api/components` 做进程健康测试；
+9. 运行 `tests/livecheck`：扫描全部清单模型，逐模型分页核对文件数、字节数和状态，校验 report 的 present/composition 汇总，并覆盖公开 API 与错误语义；默认只读元数据，`-VerifyHashes` 才读取全部权重做 SHA-256 校验。
 
-测试启动的实例会保留运行，不会在测试结束时停止。`-SkipProcess` 跳过第 8 步，`-SkipBuildContract` 跳过第 6 步。
+测试启动的实例会保留运行，不会在测试结束时停止。`-SkipProcess` 跳过第 8、9 步，`-SkipDeep` 只跳过第 9 步，`-VerifyHashes` 让第 9 步做全量哈希，`-SkipBuildContract` 跳过第 6 步。
 
 默认门禁：第一方覆盖率 ≥ 70%，单包 ≥ 40%。当前基线：第一方 70.4%，componentclient 82.8%，componentprotocol 86.4%，modelmanifest 87.5%。覆盖率报告不宣称 100%：OS 差异分支、错误注入路径和 `internal/upstream` 复制闭包仍会留白，门禁用于防止明显回退。
 

@@ -13,6 +13,8 @@ set "HTML=%WORK%\coverage.html"
 set "MIN_FIRST=70.0"
 set "MIN_PKG=40.0"
 set "SKIP_PROCESS="
+set "SKIP_DEEP="
+set "VERIFY_HASHES="
 set "SKIP_CONTRACT="
 
 :parse_args
@@ -20,9 +22,11 @@ if "%~1"=="" goto args_done
 if /i "%~1"=="-MinFirstPartyCoverage" goto arg_min_first
 if /i "%~1"=="-MinPackageCoverage" goto arg_min_pkg
 if /i "%~1"=="-SkipProcess" goto arg_skip_process
+if /i "%~1"=="-SkipDeep" goto arg_skip_deep
+if /i "%~1"=="-VerifyHashes" goto arg_verify_hashes
 if /i "%~1"=="-SkipBuildContract" goto arg_skip_contract
 echo [error] unknown argument: %~1
-echo usage: %~nx0 [-MinFirstPartyCoverage N] [-MinPackageCoverage N] [-SkipProcess] [-SkipBuildContract]
+echo usage: %~nx0 [-MinFirstPartyCoverage N] [-MinPackageCoverage N] [-SkipProcess] [-SkipDeep] [-VerifyHashes] [-SkipBuildContract]
 exit /b 1
 
 :arg_min_first
@@ -47,6 +51,16 @@ goto parse_args
 
 :arg_skip_process
 set "SKIP_PROCESS=1"
+shift
+goto parse_args
+
+:arg_skip_deep
+set "SKIP_DEEP=1"
+shift
+goto parse_args
+
+:arg_verify_hashes
+set "VERIFY_HASHES=1"
 shift
 goto parse_args
 
@@ -89,7 +103,7 @@ if not "%TEST_RC%"=="0" (
 
 echo.
 echo === first-party coverage ===
-findstr /v /i /c:"internal/upstream/" "%PROFILE%" > "%FIRSTPARTY%"
+findstr /v /i /c:"internal/upstream/" /c:"tests/livecheck/" "%PROFILE%" > "%FIRSTPARTY%"
 go tool cover -func="%FIRSTPARTY%" > "%FUNC%" 2>&1
 if errorlevel 1 (
     type "%FUNC%"
@@ -270,6 +284,22 @@ if errorlevel 1 (
     exit /b 1
 )
 echo PASS: run.bat process health (pid %CENTER_PID%, state/report/components)
+
+if defined SKIP_DEEP goto deep_done
+echo.
+echo === deep model/API verification ===
+set "MANIFEST=%USERPROFILE%\.fengshen\model_manifest.json"
+if defined VERIFY_HASHES (
+    go run ./tests/livecheck -base "%BASE%" -manifest "%MANIFEST%" -verify-hashes
+) else (
+    go run ./tests/livecheck -base "%BASE%" -manifest "%MANIFEST%"
+)
+if errorlevel 1 (
+    echo [error] deep model/API verification failed
+    popd
+    exit /b 1
+)
+:deep_done
 
 :process_done
 echo.
