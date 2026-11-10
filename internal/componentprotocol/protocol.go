@@ -18,6 +18,7 @@ const (
 	BatchHTTPv1  = "fengshen.batch.http/v1"
 	TimbreHTTPv1 = "fengshen.timbre.http/v1"
 	HaarHTTPv1   = "fengshen.haar.http/v1"
+	LlamaHTTPv1  = "fengshen.llama.http/v1"
 
 	MaxControlJSON  = 64 << 10
 	MaxWSFrame      = 1 << 20
@@ -294,6 +295,30 @@ func demucsModels(m map[string][]string) bool {
 
 func seedVCModels(m map[string][]string) bool {
 	return len(m) == 4 && len(m["seed-vc"]) == 2 && len(m["seed-whisper"]) == 1 && len(m["campplus"]) == 1 && len(m["bigvgan"]) == 1
+}
+
+// LlamaStartRequest is the typed control message that makes the llama shim own
+// the llama-server process and its internal key. Fixed runtime flags stay in the
+// shim; only bound model paths and the vision switch cross the boundary.
+type LlamaStartRequest struct {
+	Protocol string `json:"protocol"`
+	Model    string `json:"model"`
+	MMProj   string `json:"mmproj,omitempty"`
+	Vision   bool   `json:"vision"`
+}
+
+func DecodeLlamaStart(data []byte) (LlamaStartRequest, error) {
+	var req LlamaStartRequest
+	if len(data) > MaxControlJSON {
+		return req, Fail("component_too_large")
+	}
+	if err := StrictJSON(data, &req); err != nil {
+		return req, Fail("component_request")
+	}
+	if req.Protocol != LlamaHTTPv1 || !ValidAbsPath(req.Model) || req.Vision && !ValidAbsPath(req.MMProj) || !req.Vision && req.MMProj != "" {
+		return req, Fail("component_request")
+	}
+	return req, nil
 }
 
 func ValidAbsPath(p string) bool {

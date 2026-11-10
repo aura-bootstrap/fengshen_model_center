@@ -16,7 +16,7 @@
 .
 ├─ cmd/
 │  ├─ fengshen-model-center/    # 中心主程序（package main）与内嵌 web/
-│  ├─ fengshen-shim/            # 执行器适配进程（whisper-stream/whisper-batch/timbre/haar）
+│  ├─ fengshen-shim/            # 执行器适配进程（whisper-stream/whisper-batch/timbre/haar/llama）
 │  └─ build/                    # manifest/delivery/engine-trust/verify-lock 生成器
 ├─ internal/
 │  ├─ bindings/                 # 权重绑定与事务
@@ -27,7 +27,7 @@
 │  ├─ integration/              # 三端只读集成（会话、快照、健康）
 │  ├─ mediaclient/
 │  ├─ registry/                 # 外置路径登记存储
-│  ├─ runtimeadapter/           # 编排：经 shim 调用 Whisper/音色/Haar，llama 直连 HTTP
+│  ├─ runtimeadapter/           # 编排：Whisper/音色/Haar/llama 全部经 shim 调用
 │  ├─ runtimeassets/            # 运行时资产分块存储
 │  ├─ runtimehttp/              # 对外运行时上传/下载 HTTP
 │  ├─ runtimejobs/              # 运行时任务与配额
@@ -87,14 +87,14 @@ go run ./cmd/build -mode manifest -root <目录> -template <模板>
                               ├─ whisper-stream（WS，NDJSON 语义）
                               ├─ whisper-batch（HTTP 异步作业）
                               ├─ timbre demucs/seedvc（HTTP 异步作业）
-                              └─ haar（HTTP 推理）
-                              └─HTTP→ llama-server（原生 HTTP）
+                              ├─ haar（HTTP 推理）
+                              └─ llama（HTTP 代理；shim 启动 llama-server 并持有上游 key）
 ```
 
-- 中心进程不再读取执行器 stdout 作为数据通道，也不再拼接 CLI 业务参数或进程内直调推理。
+- 中心进程不再读取执行器 stdout 作为数据通道、不再拼接 CLI 业务参数、不再进程内直调推理，也不再直接访问 llama-server。
 - 每个 shim 仅监听 `127.0.0.1` 随机端口；令牌经 `FENGSHEN_SHIM_TOKEN` 注入，仅在内存与环境块中使用，不落盘、不进日志。
 - 内部接口拒绝缺失/重复/混合认证头与代理头，限制控制 JSON、WS 帧、图像与产物大小；会话取消或过期会终止 shim 进程树并释放端口。
-- 权重与输入仍为经验证的本地只读路径绑定；流式 PCM 走 WS，Haar 图像走 HTTP 请求体，作业产物经 HTTP 下载。
+- 权重与输入仍为经验证的本地只读路径绑定；流式 PCM 走 WS，Haar 图像走 HTTP 请求体，作业产物经 HTTP 下载；llama 的 `/health` 与 `/v1/chat/completions` 经 shim 代理，上游内部 key 不出 shim。
 
 ## 测试
 

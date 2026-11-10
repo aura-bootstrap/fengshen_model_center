@@ -3,35 +3,31 @@ package runtimeadapter
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
-	"net"
-	"net/http"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/scoring"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/bindings"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/componentprotocol"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeassets"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimejobs"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeprocess"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/scoring"
 )
 
 var errLlamaBinding = errors.New("center_model_incompatible")
@@ -198,13 +194,10 @@ func llamaResultEventCategory(event *scoring.RawEvent, input runtimejobs.ScoreIn
 
 // All cache fields are protected by Executor.heavy, including timer callbacks.
 type llamaRuntime struct {
-	process    *runtimeprocess.Process
-	binary     runtimeprocess.VerifiedBinary
+	session    *shimSession
 	identity   string
-	base, key  string
 	cancel     context.CancelFunc
 	release    func()
-	drains     sync.WaitGroup
 	generation uint64
 	idleCancel chan struct{}
 }
@@ -223,20 +216,16 @@ func (r *llamaRuntime) unload() {
 		r.cancel()
 		r.cancel = nil
 	}
-	if r.process != nil {
-		_ = r.process.Close()
-		r.process = nil
+	if r.session != nil {
+		_ = r.session.Close()
+		r.session = nil
 	}
-	r.drains.Wait()
 	if r.release != nil {
 		release := r.release
 		r.release = nil
 		release()
 	}
-	r.binary = runtimeprocess.VerifiedBinary{}
 	r.identity = ""
-	r.base = ""
-	r.key = ""
 }
 
 func (e *Executor) idleLlama() {
@@ -326,21 +315,17 @@ func llamaModel(paths []string) (string, error) {
 	return paths[0], nil
 }
 
-func llamaPlan(r Resolved, vision bool) (runtimeprocess.VerifiedBinary, []string, error) {
-	return llamaPlanWithCPU(r, vision, llamaHostAVX2)
-}
-
-func llamaPlanWithCPU(r Resolved, vision bool, avx2 func() bool) (runtimeprocess.VerifiedBinary, []string, error) {
+func llamaBindingPlan(r Resolved, vision bool, avx2 func() bool) (runtimeprocess.VerifiedBinary, string, string, error) {
 	m := r.Manifest
 	declared := false
 	for _, protocol := range m.Protocols {
 		declared = declared || protocol == domain.CenterLlamaProtocol
 	}
 	if r.Binding.Component.Protocol != domain.CenterLlamaProtocol || !declared {
-		return runtimeprocess.VerifiedBinary{}, nil, errors.New("center_protocol_unsupported")
+		return runtimeprocess.VerifiedBinary{}, "", "", errors.New("center_protocol_unsupported")
 	}
 	if components.Validate(m) != nil || m.ComponentID != "llama-runtime" || !llamaVersionCompatible(m.Version, m.Version == "b12182-fengshen2-cpu-avx2" && avx2()) || m.OS != "windows" || m.Arch != "amd64" || m.Packaging != "native" || r.Binding.Device != "cpu" || r.Binding.Component.ID != m.ComponentID || r.Binding.Component.Version != m.Version {
-		return runtimeprocess.VerifiedBinary{}, nil, errLlamaBinding
+		return runtimeprocess.VerifiedBinary{}, "", "", errLlamaBinding
 	}
 	locked := false
 	for _, b := range m.BuildInputs {
@@ -349,7 +334,7 @@ func llamaPlanWithCPU(r Resolved, vision bool, avx2 func() bool) (runtimeprocess
 		}
 	}
 	if !locked {
-		return runtimeprocess.VerifiedBinary{}, nil, errLlamaBinding
+		return runtimeprocess.VerifiedBinary{}, "", "", errLlamaBinding
 	}
 	id := "local-text"
 	if vision {
@@ -358,7 +343,7 @@ func llamaPlanWithCPU(r Resolved, vision bool, avx2 func() bool) (runtimeprocess
 	var models, projectors []string
 	for _, f := range r.Models {
 		if f.ModelID != id {
-			return runtimeprocess.VerifiedBinary{}, nil, errLlamaBinding
+			return runtimeprocess.VerifiedBinary{}, "", "", errLlamaBinding
 		}
 		if vision && strings.HasPrefix(strings.ToLower(filepath.Base(f.Path)), "mmproj-") {
 			projectors = append(projectors, f.Path)
@@ -366,12 +351,11 @@ func llamaPlanWithCPU(r Resolved, vision bool, avx2 func() bool) (runtimeprocess
 			models = append(models, f.Path)
 		}
 	}
-	// The registered vision composition is explicit; do not pair arbitrary GGUFs.
+	projector := ""
 	if vision {
 		if len(models) != 1 || len(projectors) != 1 || filepath.Dir(models[0]) != filepath.Dir(projectors[0]) {
-			return runtimeprocess.VerifiedBinary{}, nil, errLlamaBinding
+			return runtimeprocess.VerifiedBinary{}, "", "", errLlamaBinding
 		}
-		projector := ""
 		switch filepath.Base(models[0]) {
 		case "SmolVLM-500M-Instruct-Q8_0.gguf":
 			projector = "mmproj-SmolVLM-500M-Instruct-f16.gguf"
@@ -379,80 +363,41 @@ func llamaPlanWithCPU(r Resolved, vision bool, avx2 func() bool) (runtimeprocess
 			projector = "mmproj-Qwen3-VL-2B-Instruct-Q8_0.gguf"
 		}
 		if projector == "" || filepath.Base(projectors[0]) != projector {
-			return runtimeprocess.VerifiedBinary{}, nil, errLlamaBinding
+			return runtimeprocess.VerifiedBinary{}, "", "", errLlamaBinding
 		}
+		projector = projectors[0]
+		if !filepath.IsAbs(projector) || strings.ToLower(filepath.Ext(projector)) != ".gguf" {
+			return runtimeprocess.VerifiedBinary{}, "", "", errLlamaBinding
+		}
+	} else if len(projectors) != 0 {
+		return runtimeprocess.VerifiedBinary{}, "", "", errLlamaBinding
 	}
 	model, err := llamaModel(models)
 	if err != nil {
-		return runtimeprocess.VerifiedBinary{}, nil, err
-	}
-	if vision && len(projectors) != 1 || !vision && len(projectors) != 0 {
-		return runtimeprocess.VerifiedBinary{}, nil, errLlamaBinding
-	}
-	args := []string{"--host", "127.0.0.1", "--offline", "--no-webui", "--no-warmup", "--parallel", "1", "--ctx-size", "4096", "--n-gpu-layers", "0", "--threads", "4", "--no-mmproj-offload", "--model", model}
-	if vision {
-		if !filepath.IsAbs(projectors[0]) || strings.ToLower(filepath.Ext(projectors[0])) != ".gguf" {
-			return runtimeprocess.VerifiedBinary{}, nil, errLlamaBinding
-		}
-		args = append(args, "--mmproj", projectors[0])
-	} else {
-		args = append(args, "--no-mmproj")
+		return runtimeprocess.VerifiedBinary{}, "", "", err
 	}
 	raw, err := json.Marshal(r.Binding)
 	if err != nil {
-		return runtimeprocess.VerifiedBinary{}, nil, errLlamaBinding
+		return runtimeprocess.VerifiedBinary{}, "", "", errLlamaBinding
 	}
 	sum := sha256.Sum256(raw)
 	for _, f := range m.Files {
 		if f.Path == "internal/llama-server.exe" {
 			b, err := runtimeprocess.VerifyBinary(filepath.Join(r.ComponentRoot, filepath.FromSlash(f.Path)), f.SHA256, m.ComponentID+"/"+m.Version, hex.EncodeToString(sum[:]))
-			return b, args, err
+			return b, model, projector, err
 		}
 	}
-	return runtimeprocess.VerifiedBinary{}, nil, errors.New("center_component_missing")
+	return runtimeprocess.VerifiedBinary{}, "", "", errors.New("center_component_missing")
 }
 
-func startLlama(ctx context.Context, s *runtimeprocess.Supervisor, b runtimeprocess.VerifiedBinary, args []string, key string) (*runtimeprocess.Process, error) {
-	return s.StartLlama(ctx, b, runtimeprocess.Options{Args: args, MaxStdinBytes: 1, MaxStdoutBytes: 16 << 20, MaxStderrBytes: 16 << 20, BufferBytes: 4 << 20}, key)
-}
-
-func llamaHTTP() *http.Client {
-	return &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext, DisableKeepAlives: true, MaxResponseHeaderBytes: 32 << 10}, Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-}
-
-func llamaReady(ctx context.Context, p *runtimeprocess.Process, b runtimeprocess.VerifiedBinary, base string) error {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-	c := llamaHTTP()
-	defer c.CloseIdleConnections()
-	timer := time.NewTicker(100 * time.Millisecond)
-	defer timer.Stop()
-	for {
-		if err := p.CheckIdentity(b); err != nil {
-			return err
-		}
-		hc, stop := context.WithTimeout(ctx, time.Second)
-		req, _ := http.NewRequestWithContext(hc, http.MethodGet, base+"/health", nil)
-		resp, err := c.Do(req)
-		ready := false
-		if err == nil {
-			data, readErr := io.ReadAll(io.LimitReader(resp.Body, 4097))
-			resp.Body.Close()
-			var health struct {
-				Status string `json:"status"`
-			}
-			ready = readErr == nil && len(data) <= 4096 && resp.StatusCode == 200 && json.Unmarshal(data, &health) == nil && health.Status == "ok"
-		}
-		stop()
-		if ready {
-			return p.CheckIdentity(b)
-		}
-		select {
-		case <-ctx.Done():
-			return errors.New("center_llama_load_failed")
-		case <-timer.C:
-		}
+// llamaShimPlan keeps all binding validation in the center and returns only the
+// typed start request; the shim owns the fixed llama-server arguments.
+func llamaShimPlan(r Resolved, vision bool) (string, componentprotocol.LlamaStartRequest, error) {
+	b, model, projector, err := llamaBindingPlan(r, vision, llamaHostAVX2)
+	if err != nil {
+		return "", componentprotocol.LlamaStartRequest{}, err
 	}
+	return b.Path(), componentprotocol.LlamaStartRequest{Protocol: componentprotocol.LlamaHTTPv1, Model: model, MMProj: projector, Vision: vision}, nil
 }
 
 func (e *Executor) llamaImage(ctx context.Context, req runtimejobs.Request) (*scoring.ImageInput, error) {
@@ -557,7 +502,7 @@ func (e *Executor) scoreLocked(ctx context.Context, req runtimejobs.Request, res
 			return fail(errors.New("center_request_invalid"))
 		}
 	}
-	b, args, err := llamaPlan(resolved, vision)
+	target, startReq, err := llamaShimPlan(resolved, vision)
 	if err != nil {
 		return fail(err)
 	}
@@ -565,7 +510,7 @@ func (e *Executor) scoreLocked(ctx context.Context, req runtimejobs.Request, res
 	if err != nil {
 		return fail(err)
 	}
-	if state.process != nil && (state.identity != identity || state.binary != b) {
+	if state.session != nil && state.identity != identity {
 		state.unload()
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
@@ -575,57 +520,33 @@ func (e *Executor) scoreLocked(ctx context.Context, req runtimejobs.Request, res
 			return fail(err)
 		}
 	}
-	if state.process == nil {
-		listener, err := net.Listen("tcp4", "127.0.0.1:0")
-		if err != nil {
-			return fail(errors.New("center_runtime_busy"))
-		}
-		port := listener.Addr().(*net.TCPAddr).Port
-		if port == 11434 {
-			listener.Close()
-			return fail(errors.New("center_runtime_busy"))
-		}
-		keyBytes := make([]byte, 32)
-		if _, err = rand.Read(keyBytes); err != nil {
-			listener.Close()
-			return fail(err)
-		}
-		key := hex.EncodeToString(keyBytes)
-		args = append(args, "--port", strconv.Itoa(port))
-		listener.Close()
+	if state.session == nil {
 		life, stop := context.WithCancel(e.lifetime)
-		p, err := startLlama(life, &e.supervisor, b, args, key)
+		session, err := e.newShimSession(life, "llama", target, "", "")
 		if err != nil {
 			stop()
 			return fail(err)
 		}
-		state.process = p
+		startCtx, cancelStart := context.WithTimeout(runCtx, 3*time.Minute)
+		err = session.client.StartLlama(startCtx, startReq)
+		cancelStart()
+		if err != nil {
+			_ = session.Close()
+			stop()
+			return fail(errors.New("center_llama_load_failed"))
+		}
+		state.session = session
 		state.cancel = stop
-		state.binary = b
 		state.identity = identity
-		state.base = fmt.Sprintf("http://127.0.0.1:%d", port)
-		state.key = key
 		state.release = release
 		release = nil
-		_ = p.Stdin().Close()
-		state.drains.Add(2)
-		for _, stream := range []io.Reader{p.Stdout(), p.Stderr()} {
-			go func(src io.Reader) { defer state.drains.Done(); _, _ = io.Copy(io.Discard, src) }(stream)
-		}
 	} else if release != nil {
 		release()
 		release = nil
 	}
-	p, base, key := state.process, state.base, state.key
-	stopped := make(chan struct{})
-	stopRequest := context.AfterFunc(runCtx, func() { _ = p.Close(); close(stopped) })
-	defer func() {
-		if !stopRequest() {
-			<-stopped
-		}
-	}()
-	// Check the actual retained binary identity and health for every request.
-	if err = llamaReady(runCtx, p, state.binary, base); err != nil {
+	client := state.session.client
+	// Health and inference both traverse the shim; the upstream key stays inside it.
+	if err = client.LlamaHealth(runCtx); err != nil {
 		if runCtx.Err() != nil {
 			return fail(runCtx.Err())
 		}
@@ -636,9 +557,7 @@ func (e *Executor) scoreLocked(ctx context.Context, req runtimejobs.Request, res
 			return fail(err)
 		}
 	}
-	if err = p.CheckIdentity(b); err != nil {
-		return fail(err)
-	}
+	base, key := client.BaseURL(), client.Token()
 	var events []*scoring.RawEvent
 	if vision {
 		c, ce := scoring.NewConstrainedLocalVisionClient(scoring.LocalVisionConfig{BaseURL: base + "/v1", APIKey: key, Model: "bound-model", TimeoutSec: scoring.MaxTimeoutSec, DisableRetries: true})
@@ -658,9 +577,6 @@ func (e *Executor) scoreLocked(ctx context.Context, req runtimejobs.Request, res
 	}
 	if err != nil {
 		return fail(llamaInferenceFailure(err))
-	}
-	if err = p.CheckIdentity(b); err != nil {
-		return fail(err)
 	}
 	raw, err = json.Marshal(events)
 	if err != nil {

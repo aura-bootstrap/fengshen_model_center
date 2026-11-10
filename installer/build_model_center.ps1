@@ -142,7 +142,7 @@ Run $go @('-C', $module, 'build', '-trimpath', '-buildvcs=false', '-ldflags', "-
 Run $go @('-C', $module, 'build', '-trimpath', '-buildvcs=false', '-o', (Join-Path $centerDir 'fengshen-shim.exe'), './cmd/fengshen-shim')
 Copy-Item (Join-Path $centerDir 'fengshen-shim.exe') (Join-Path $Output 'model-center/fengshen-shim.exe')
 $centerBuildInputs = @(@{name='Go'; version=$goVersion; sha256=(Get-FileHash $go -Algorithm SHA256).Hash.ToLower(); license='BSD-3-Clause'})
-Metadata-Smoke 'model-center' $centerDir 'fengshen-model-center.exe' 'go' -Protocols @('fengshen.stream.ws/v1','fengshen.batch.http/v1','fengshen.timbre.http/v1','fengshen.haar.http/v1') -BuildInputs $centerBuildInputs
+Metadata-Smoke 'model-center' $centerDir 'fengshen-model-center.exe' 'go' -Protocols @('fengshen.stream.ws/v1','fengshen.batch.http/v1','fengshen.timbre.http/v1','fengshen.haar.http/v1','fengshen.llama.http/v1') -BuildInputs $centerBuildInputs
 Copy-Item (Join-Path $centerDir 'fengshen-model-center.exe') (Join-Path $Output 'model-center\fengshen-model-center.exe')
 Copy-Item (Join-Path $centerDir 'fengshen-shim.exe') (Join-Path $Output 'model-center/fengshen-shim.exe')
 $results += @{component_id='model-center'; build='built'; startup_test='passed'; clean_environment='not_verified'; inference='not_tested'; reason='Version/platform-checked --component-info only; host isolation and inference were not tested.'}

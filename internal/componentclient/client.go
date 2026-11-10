@@ -211,6 +211,39 @@ func responseError(resp *http.Response) error {
 	return &e
 }
 
+func (c *Client) BaseURL() string { return c.base }
+func (c *Client) Token() string   { return c.token }
+
+func (c *Client) StartLlama(ctx context.Context, req componentprotocol.LlamaStartRequest) error {
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/v1/llama/start", raw)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return responseError(resp)
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, componentprotocol.MaxControlJSON))
+	return nil
+}
+
+func (c *Client) LlamaHealth(ctx context.Context) error {
+	resp, err := c.do(ctx, http.MethodGet, "/health", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return responseError(resp)
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, componentprotocol.MaxControlJSON))
+	return nil
+}
+
 // Stream is one authenticated WebSocket session. One connection carries exactly
 // one center-side stream request.
 type Stream struct {

@@ -3,6 +3,7 @@
 package shim
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,7 @@ const (
 	ModeWhisperBatch  = "whisper-batch"
 	ModeTimbre        = "timbre"
 	ModeHaar          = "haar"
+	ModeLlama         = "llama"
 )
 
 type Config struct {
@@ -34,6 +36,9 @@ type Config struct {
 	FrontalXML string
 	ProfileXML string
 	StartChild StartChild // test injection only
+
+	// TestLlamaControl proxies /fixture/* to the fake upstream. Tests only.
+	TestLlamaControl bool
 }
 
 type Server struct {
@@ -45,11 +50,18 @@ type Server struct {
 	jobs   map[string]*job
 	active *job
 	closed bool
+
+	llamaMu      sync.Mutex
+	llamaChild   Child
+	llamaCancel  context.CancelFunc
+	llamaBase    string
+	llamaKey     string
+	llamaStarted bool
 }
 
 func New(cfg Config) (*Server, error) {
 	switch cfg.Mode {
-	case ModeWhisperStream, ModeWhisperBatch, ModeTimbre, ModeHaar:
+	case ModeWhisperStream, ModeWhisperBatch, ModeTimbre, ModeHaar, ModeLlama:
 	default:
 		return nil, errors.New("shim_mode_invalid")
 	}
@@ -99,6 +111,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/jobs/{id}/events", s.jobEvents)
 	mux.HandleFunc("GET /v1/jobs/{id}/artifacts/{name}", s.jobArtifact)
 	mux.HandleFunc("POST /v1/face/classify", s.classify)
+	mux.HandleFunc("POST /v1/llama/start", s.startLlama)
+	mux.HandleFunc("POST /v1/llama/stop", s.stopLlama)
+	mux.HandleFunc("GET /health", s.llamaProxyHealth)
+	mux.HandleFunc("POST /v1/chat/completions", s.llamaProxyChat)
+	if s.cfg.TestLlamaControl {
+		mux.HandleFunc("GET /fixture/", s.llamaProxyFixture)
+		mux.HandleFunc("POST /fixture/", s.llamaProxyFixture)
+	}
 	return s.authorize(mux)
 }
 
@@ -114,6 +134,7 @@ func (s *Server) Close() error {
 	if active != nil {
 		active.cancel()
 	}
+	s.closeLlama()
 	for _, j := range jobs {
 		<-j.done
 		_ = os.RemoveAll(j.dir)

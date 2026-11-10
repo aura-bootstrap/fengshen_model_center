@@ -290,6 +290,9 @@ func (p *Process) Stdout() io.ReadCloser { return p.stdout }
 func (p *Process) Stderr() io.ReadCloser { return p.stderr }
 func (p *Process) Identity() Identity    { return p.identity }
 
+// Path exposes the verified canonical path to trusted adapters.
+func (b VerifiedBinary) Path() string { return b.path }
+
 // CheckIdentity is the reuse gate: checks frozen component/binding/file digest,
 // live process handle, PID, creation time, image file identity and Job membership.
 // It does not discover/attach by PID or port; protocol readiness is adapter-owned.

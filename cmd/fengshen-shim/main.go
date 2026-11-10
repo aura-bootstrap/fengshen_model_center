@@ -18,7 +18,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "", "whisper-stream, whisper-batch, timbre or haar")
+	mode := flag.String("mode", "", "whisper-stream, whisper-batch, timbre, haar or llama")
 	listen := flag.String("listen", "", "loopback listen address")
 	target := flag.String("target", "", "absolute path to the legacy component executable")
 	workDir := flag.String("work-dir", "", "absolute scratch directory")

@@ -114,6 +114,7 @@ func writeComponentInfo(w io.Writer) {
 			componentprotocol.BatchHTTPv1,
 			componentprotocol.TimbreHTTPv1,
 			componentprotocol.HaarHTTPv1,
+			componentprotocol.LlamaHTTPv1,
 		},
 		"inference": "not_tested",
 	})

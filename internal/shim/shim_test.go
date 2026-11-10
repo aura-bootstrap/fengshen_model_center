@@ -10,10 +10,12 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -62,7 +64,7 @@ func TestAuthBoundary(t *testing.T) {
 }
 
 func TestJobLifecycle(t *testing.T) {
-	start := func(ctx context.Context, target string, args []string, lim Limits) (Child, error) {
+	start := func(ctx context.Context, target string, args []string, lim Limits, env map[string]string) (Child, error) {
 		out := ""
 		for i := 0; i+1 < len(args); i++ {
 			if args[i] == "-of" {
@@ -146,7 +148,7 @@ func TestJobLifecycle(t *testing.T) {
 }
 
 func TestStreamBridge(t *testing.T) {
-	start := func(ctx context.Context, target string, args []string, lim Limits) (Child, error) {
+	start := func(ctx context.Context, target string, args []string, lim Limits, env map[string]string) (Child, error) {
 		return newEchoChild(), nil
 	}
 	s, err := New(Config{Mode: ModeWhisperStream, Token: testToken, Target: fakeExe(t), WorkRoot: t.TempDir(), StartChild: start})
@@ -313,3 +315,100 @@ func haarXML(t *testing.T, name string) string {
 	}
 	return p
 }
+
+func TestLlamaShimStartProxyStop(t *testing.T) {
+	start := func(ctx context.Context, target string, args []string, lim Limits, env map[string]string) (Child, error) {
+		port := 0
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "--port" {
+				port, _ = strconv.Atoi(args[i+1])
+			}
+		}
+		if port == 0 {
+			return nil, fmt.Errorf("missing --port")
+		}
+		key := env["LLAMA_API_KEY"]
+		listener, err := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(port))
+		if err != nil {
+			return nil, err
+		}
+		mux := http.NewServeMux()
+		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		})
+		mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer "+key {
+				w.WriteHeader(401)
+				return
+			}
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		})
+		srv := &http.Server{Handler: mux}
+		go func() { _ = srv.Serve(listener) }()
+		return &fakeLlamaChild{srv: srv}, nil
+	}
+	s, err := New(Config{Mode: ModeLlama, Token: testToken, Target: fakeExe(t), WorkRoot: t.TempDir(), StartChild: start})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	model := filepath.Join(t.TempDir(), "m.gguf")
+	if err := os.WriteFile(model, []byte("gguf"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"protocol":"fengshen.llama.http/v1","model":%q}`, model)
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/llama/start", strings.NewReader(body))
+	req.Header = authHeader()
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("start status=%d", resp.StatusCode)
+	}
+	for _, path := range []string{"/health", "/v1/chat/completions"} {
+		method := "GET"
+		if strings.Contains(path, "chat") {
+			method = "POST"
+		}
+		r, _ := http.NewRequest(method, ts.URL+path, strings.NewReader(`{}`))
+		r.Header = authHeader()
+		got, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got.Body.Close()
+		if got.StatusCode != http.StatusOK {
+			t.Fatalf("%s status=%d", path, got.StatusCode)
+		}
+	}
+	r, _ := http.NewRequest("POST", ts.URL+"/v1/llama/stop", nil)
+	r.Header = authHeader()
+	got, err := http.DefaultClient.Do(r)
+	if err != nil || got.StatusCode != http.StatusOK {
+		t.Fatal(err, got.StatusCode)
+	}
+	got.Body.Close()
+	h, _ := http.NewRequest("GET", ts.URL+"/health", nil)
+	h.Header = authHeader()
+	after, err := http.DefaultClient.Do(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after.Body.Close()
+	if after.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("health after stop=%d", after.StatusCode)
+	}
+}
+
+type fakeLlamaChild struct{ srv *http.Server }
+
+func (c *fakeLlamaChild) Stdin() io.WriteCloser { return nopWriteCloser{io.Discard} }
+func (c *fakeLlamaChild) Stdout() io.Reader     { return strings.NewReader("") }
+func (c *fakeLlamaChild) Stderr() io.Reader     { return strings.NewReader("") }
+func (c *fakeLlamaChild) Wait() error           { select {} }
+func (c *fakeLlamaChild) Close() error          { return c.srv.Close() }

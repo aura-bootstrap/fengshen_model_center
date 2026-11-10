@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,14 +15,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/scoring"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/bindings"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeassets"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimejobs"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeprocess"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/scoring"
 )
 
 // This executable is a lifecycle/protocol fixture, never real model inference.
@@ -98,6 +99,7 @@ func llamaCacheExecutor(t *testing.T) (*Executor, runtimejobs.Request, *Resolved
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.launchShim = inProcessShimLauncher(t)
 	roundtrip, _ := json.Marshal(input)
 	var check scoring.CandidateInput
 	_ = json.Unmarshal(roundtrip, &check)
@@ -113,8 +115,7 @@ func llamaCacheExecutor(t *testing.T) (*Executor, runtimejobs.Request, *Resolved
 
 func TestExecutorLlamaRetainsLeaseAndReusesOwnedProcess(t *testing.T) {
 	e, req, resolved, releases := llamaCacheExecutor(t)
-	var first *runtimeprocess.Process
-	var binary runtimeprocess.VerifiedBinary
+	var first *shimSession
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	for i := 0; i < 2; i++ {
@@ -126,14 +127,13 @@ func TestExecutorLlamaRetainsLeaseAndReusesOwnedProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 		if i == 0 {
-			first = e.llama.process
-			binary = e.llama.binary
+			first = e.llama.session
 			cancel()
-		} else if first != e.llama.process {
-			t.Fatal("cache hit started another process")
+		} else if first != e.llama.session {
+			t.Fatal("cache hit started another session")
 		}
-		if err := first.CheckIdentity(binary); err != nil {
-			t.Fatal("task context owned cached process", err)
+		if first == nil || first.client == nil {
+			t.Fatal("cache did not retain a session")
 		}
 		if err := os.Rename(resolved.Models[0].Path, resolved.Models[0].Path+".moved"); err == nil {
 			t.Fatal("cached process lost pinned model lease")
@@ -164,7 +164,7 @@ func TestExecutorLlamaCancellationAndCrossCapabilityEviction(t *testing.T) {
 		// Observe eviction inside resolution, before another adapter can load weights.
 		resolve := e.resolve
 		e.resolve = func(ctx context.Context, b integration.ExecutionBindingRef, c integration.ExecutionComponentRef) (Resolved, error) {
-			if e.llama.process != nil {
+			if e.llama.session != nil {
 				t.Fatal("heavy admission retained llama", scene)
 			}
 			return resolve(ctx, b, c)
@@ -247,7 +247,7 @@ func TestExecutorLlamaCacheIdentityAndReplacement(t *testing.T) {
 	if _, err := e.Execute(context.Background(), req, nil); err != nil {
 		t.Fatal(err)
 	}
-	old, binary := e.llama.process, e.llama.binary
+	old := e.llama.session
 	identity, err := llamaCacheIdentity(*r)
 	if err != nil {
 		t.Fatal(err)
@@ -272,18 +272,18 @@ func TestExecutorLlamaCacheIdentityAndReplacement(t *testing.T) {
 	req.Binding.Revision++
 	r.Binding.Ref = req.Binding
 	if _, err := e.Execute(context.Background(), req, func(p runtimejobs.Progress) error {
-		if p.Stage == runtimejobs.StageLoading && old.CheckIdentity(binary) == nil {
+		if p.Stage == runtimejobs.StageLoading && old != nil && e.llama.session == old {
 			t.Fatal("old process still alive at replacement load")
 		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if e.llama.process == old || releases.Load() != 1 {
+	if e.llama.session == old || releases.Load() != 1 {
 		t.Fatal("binding replacement did not unload first")
 	}
 	// A dead owned process must never be replaced merely because its port answers.
-	_ = e.llama.process.Close()
+	_ = e.llama.session.Close()
 	if _, err := e.Execute(context.Background(), req, nil); err == nil {
 		t.Fatal("dead process reused")
 	}
@@ -292,11 +292,19 @@ func TestExecutorLlamaCacheIdentityAndReplacement(t *testing.T) {
 	}
 }
 
-func helperControl(t *testing.T, base, path string) {
+func helperControl(t *testing.T, session *shimSession, path string) {
 	t.Helper()
+	if session == nil || session.client == nil {
+		t.Fatal("missing llama shim session")
+	}
 	c := llamaHTTP()
 	defer c.CloseIdleConnections()
-	resp, err := c.Get(base + path)
+	req, err := http.NewRequest("GET", session.client.BaseURL()+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+session.client.Token())
+	resp, err := c.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,8 +318,8 @@ func TestExecutorLlamaActiveCancelDeadlineAndClose(t *testing.T) {
 			if _, err := e.Execute(context.Background(), req, nil); err != nil {
 				t.Fatal(err)
 			}
-			old, binary, base := e.llama.process, e.llama.binary, e.llama.base
-			helperControl(t, base, "/fixture/block")
+			old := e.llama.session
+			helperControl(t, old, "/fixture/block")
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			if mode == "deadline" {
@@ -332,7 +340,7 @@ func TestExecutorLlamaActiveCancelDeadlineAndClose(t *testing.T) {
 			}()
 			<-running
 			if mode != "deadline" {
-				helperControl(t, base, "/fixture/wait-request")
+				helperControl(t, old, "/fixture/wait-request")
 			}
 			if mode == "close" {
 				if err := e.Close(); err != nil {
@@ -349,7 +357,7 @@ func TestExecutorLlamaActiveCancelDeadlineAndClose(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("request not interrupted")
 			}
-			if old.CheckIdentity(binary) == nil || releases.Load() != 2 {
+			if e.llama.session != nil || releases.Load() != 2 {
 				t.Fatal("active stop retained process or lease", releases.Load())
 			}
 		})
@@ -373,7 +381,7 @@ func TestExecutorHeavyGateAndHaarException(t *testing.T) {
 	if _, err := e.Execute(context.Background(), face, nil); err == nil {
 		t.Fatal("stale face accepted")
 	}
-	if e.llama.process == nil {
+	if e.llama.session == nil {
 		t.Fatal("Haar evicted llama")
 	}
 }
@@ -383,13 +391,13 @@ func TestExecutorLlamaHealthCheckedOnHit(t *testing.T) {
 	if _, err := e.Execute(context.Background(), req, nil); err != nil {
 		t.Fatal(err)
 	}
-	helperControl(t, e.llama.base, "/fixture/health-fail")
+	helperControl(t, e.llama.session, "/fixture/health-fail")
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	if _, err := e.Execute(ctx, req, nil); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := e.Execute(ctx, req, nil); err == nil || err.Error() != "center_llama_load_failed" {
 		t.Fatal("cache hit skipped health", err)
 	}
-	if releases.Load() != 2 {
+	if e.llama.session != nil || releases.Load() != 2 {
 		t.Fatal("unhealthy cache retained lease")
 	}
 }

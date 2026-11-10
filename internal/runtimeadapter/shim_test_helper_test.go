@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"testing"
 
@@ -34,13 +35,14 @@ func inProcessShimLauncher(t *testing.T) shimLauncher {
 		token := hex.EncodeToString(tokenBytes)
 		work := t.TempDir()
 		srv, err := shim.New(shim.Config{
-			Mode:       mode,
-			Token:      token,
-			Target:     target,
-			WorkRoot:   work,
-			FrontalXML: frontal,
-			ProfileXML: profile,
-			StartChild: execTestChild,
+			Mode:             mode,
+			Token:            token,
+			Target:           target,
+			WorkRoot:         work,
+			FrontalXML:       frontal,
+			ProfileXML:       profile,
+			StartChild:       execTestChild,
+			TestLlamaControl: true,
 		})
 		if err != nil {
 			return nil, err
@@ -63,8 +65,12 @@ type execChild struct {
 	stderr io.ReadCloser
 }
 
-func execTestChild(ctx context.Context, target string, args []string, lim shim.Limits) (shim.Child, error) {
+func execTestChild(ctx context.Context, target string, args []string, lim shim.Limits, env map[string]string) (shim.Child, error) {
 	cmd := exec.CommandContext(ctx, target, args...)
+	cmd.Env = os.Environ()
+	for name, value := range env {
+		cmd.Env = append(cmd.Env, name+"="+value)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err

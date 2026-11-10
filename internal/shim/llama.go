@@ -1,0 +1,271 @@
+package shim
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/aura-bootstrap/fengshen_model_center/internal/componentprotocol"
+)
+
+const (
+	llamaMaxRequest  = 4 << 20
+	llamaMaxResponse = 8 << 20
+)
+
+func (s *Server) startLlama(w http.ResponseWriter, r *http.Request) {
+	if !s.requireMode(w, ModeLlama) {
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, componentprotocol.MaxControlJSON))
+	if err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, componentprotocol.Fail("component_too_large"))
+		return
+	}
+	req, err := componentprotocol.DecodeLlamaStart(body)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, componentprotocol.Fail("component_request"))
+		return
+	}
+	if !ordinaryFile(req.Model) || req.Vision && !ordinaryFile(req.MMProj) {
+		writeError(w, http.StatusUnprocessableEntity, componentprotocol.Fail("component_request"))
+		return
+	}
+	s.llamaMu.Lock()
+	defer s.llamaMu.Unlock()
+	if s.llamaStarted {
+		writeError(w, http.StatusConflict, componentprotocol.Fail("component_conflict"))
+		return
+	}
+	port, err := freeLlamaPort()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, componentprotocol.Fail("component_failed"))
+		return
+	}
+	keyBytes := make([]byte, 32)
+	if _, err := rand.Read(keyBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, componentprotocol.Fail("component_failed"))
+		return
+	}
+	key := hex.EncodeToString(keyBytes)
+	args := []string{
+		"--host", "127.0.0.1", "--offline", "--no-webui", "--no-warmup",
+		"--parallel", "1", "--ctx-size", "4096", "--n-gpu-layers", "0",
+		"--threads", "4", "--no-mmproj-offload", "--model", req.Model,
+	}
+	if req.Vision {
+		args = append(args, "--mmproj", req.MMProj)
+	} else {
+		args = append(args, "--no-mmproj")
+	}
+	args = append(args, "--port", strconv.Itoa(port))
+	ctx, cancel := context.WithCancel(context.Background())
+	child, err := s.startChild(ctx, s.cfg.Target, args, Limits{In: 1, Out: 16 << 20, Err: 16 << 20, Buffer: 4 << 20}, map[string]string{"LLAMA_API_KEY": key})
+	if err != nil {
+		cancel()
+		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
+		return
+	}
+	go func() { _, _ = io.Copy(io.Discard, child.Stdout()) }()
+	go func() { _, _ = io.Copy(io.Discard, child.Stderr()) }()
+	base := "http://127.0.0.1:" + strconv.Itoa(port)
+	if err := waitLlamaHealth(ctx, base, key); err != nil {
+		_ = child.Close()
+		cancel()
+		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
+		return
+	}
+	s.llamaChild, s.llamaCancel, s.llamaBase, s.llamaKey, s.llamaStarted = child, cancel, base, key, true
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "protocol": componentprotocol.LlamaHTTPv1})
+}
+
+func (s *Server) stopLlama(w http.ResponseWriter, r *http.Request) {
+	if !s.requireMode(w, ModeLlama) {
+		return
+	}
+	s.closeLlama()
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+}
+
+func (s *Server) closeLlama() {
+	s.llamaMu.Lock()
+	defer s.llamaMu.Unlock()
+	if s.llamaCancel != nil {
+		s.llamaCancel()
+		s.llamaCancel = nil
+	}
+	if s.llamaChild != nil {
+		_ = s.llamaChild.Close()
+		s.llamaChild = nil
+	}
+	s.llamaBase, s.llamaKey, s.llamaStarted = "", "", false
+}
+
+func (s *Server) llamaProxyHealth(w http.ResponseWriter, r *http.Request) {
+	if !s.requireMode(w, ModeLlama) {
+		return
+	}
+	s.llamaMu.Lock()
+	base, key, started := s.llamaBase, s.llamaKey, s.llamaStarted
+	s.llamaMu.Unlock()
+	if !started {
+		writeError(w, http.StatusServiceUnavailable, componentprotocol.Fail("component_failed"))
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, base+"/health", nil)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := llamaUpstreamClient().Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
+		return
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4097))
+	if err != nil || len(body) > 4096 {
+		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
+		return
+	}
+	writeJSON(w, resp.StatusCode, json.RawMessage(body))
+}
+
+func (s *Server) llamaProxyChat(w http.ResponseWriter, r *http.Request) {
+	if !s.requireMode(w, ModeLlama) {
+		return
+	}
+	s.llamaMu.Lock()
+	base, key, started := s.llamaBase, s.llamaKey, s.llamaStarted
+	s.llamaMu.Unlock()
+	if !started {
+		writeError(w, http.StatusServiceUnavailable, componentprotocol.Fail("component_failed"))
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, llamaMaxRequest))
+	if err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, componentprotocol.Fail("component_too_large"))
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, base+"/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := llamaUpstreamClient().Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
+		return
+	}
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, llamaMaxResponse+1))
+	if err != nil || len(payload) > llamaMaxResponse {
+		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
+		return
+	}
+	if contentType := resp.Header.Get("Content-Type"); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(payload)
+}
+
+// llamaProxyFixture is compiled in production but only registered when the
+// test-only Config flag is set. It gives adapter tests a side channel to the
+// fake upstream without exposing arbitrary paths.
+func (s *Server) llamaProxyFixture(w http.ResponseWriter, r *http.Request) {
+	s.llamaMu.Lock()
+	base, key, started := s.llamaBase, s.llamaKey, s.llamaStarted
+	s.llamaMu.Unlock()
+	if !started {
+		writeError(w, http.StatusServiceUnavailable, componentprotocol.Fail("component_failed"))
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, base+r.URL.Path, nil)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := llamaUpstreamClient().Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(body)
+}
+
+func freeLlamaPort() (int, error) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+	if port == 11434 {
+		return 0, errors.New("shim: reserved llama port")
+	}
+	return port, nil
+}
+
+func waitLlamaHealth(ctx context.Context, base, key string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		hc, stop := context.WithTimeout(ctx, time.Second)
+		req, err := http.NewRequestWithContext(hc, http.MethodGet, base+"/health", nil)
+		if err == nil {
+			req.Header.Set("Authorization", "Bearer "+key)
+			resp, err := llamaUpstreamClient().Do(req)
+			ready := false
+			if err == nil {
+				data, readErr := io.ReadAll(io.LimitReader(resp.Body, 4097))
+				resp.Body.Close()
+				var health struct {
+					Status string `json:"status"`
+				}
+				ready = readErr == nil && len(data) <= 4096 && resp.StatusCode == http.StatusOK && json.Unmarshal(data, &health) == nil && health.Status == "ok"
+			}
+			stop()
+			if ready {
+				return nil
+			}
+		} else {
+			stop()
+		}
+		select {
+		case <-ctx.Done():
+			return errors.New("shim: llama load failed")
+		case <-ticker.C:
+		}
+	}
+}
+
+var llamaUpstream = &http.Client{
+	Transport: &http.Transport{
+		Proxy:                  nil,
+		DisableKeepAlives:      false,
+		ForceAttemptHTTP2:      false,
+		MaxResponseHeaderBytes: 32 << 10,
+	},
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+func llamaUpstreamClient() *http.Client { return llamaUpstream }

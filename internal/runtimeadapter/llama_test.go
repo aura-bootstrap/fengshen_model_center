@@ -29,14 +29,14 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/scoring"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/bindings"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeassets"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimejobs"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeprocess"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/scoring"
 )
 
 func sha256Hex(data []byte) string {
@@ -804,7 +804,7 @@ func TestLlamaInferenceFailureAdapterBoundary(t *testing.T) {
 	if _, err := e.Execute(context.Background(), req, nil); err != nil {
 		t.Fatal(err)
 	}
-	helperControl(t, e.llama.base, "/fixture/inference-fail")
+	helperControl(t, e.llama.session, "/fixture/inference-fail")
 	_, err := e.Execute(context.Background(), req, nil)
 	var diagnostic *llamaInferenceError
 	if !errors.As(err, &diagnostic) {
@@ -820,7 +820,7 @@ func TestLlamaInferenceFailureAdapterBoundary(t *testing.T) {
 	if marshalErr != nil || string(raw) != "{}" {
 		t.Fatal("local diagnostic crossed JSON boundary")
 	}
-	if e.llama.process != nil || releases.Load() != 2 {
+	if e.llama.session != nil || releases.Load() != 2 {
 		t.Fatal("failed inference retained owned process or model lease")
 	}
 }
@@ -830,13 +830,13 @@ func TestLlamaTextDoesNotRetryServiceUnavailable(t *testing.T) {
 	if _, err := e.Execute(context.Background(), req, nil); err != nil {
 		t.Fatal(err)
 	}
-	helperControl(t, e.llama.base, "/fixture/service-unavailable")
+	helperControl(t, e.llama.session, "/fixture/service-unavailable")
 	_, err := e.Execute(context.Background(), req, nil)
 	var diagnostic *llamaInferenceError
 	if !errors.As(err, &diagnostic) || diagnostic.kind != scoring.ErrorKindHTTP || diagnostic.statusCode != 503 || diagnostic.attempts != 1 {
 		t.Fatalf("retryable HTTP failure was not single-attempt: %v", err)
 	}
-	if e.llama.process != nil || releases.Load() != 2 {
+	if e.llama.session != nil || releases.Load() != 2 {
 		t.Fatal("failed inference retained owned process or model lease")
 	}
 }
@@ -873,13 +873,13 @@ func TestLlamaOwnedVisionRequestsBoundedGrammar(t *testing.T) {
 	if len(result.Events) != 2 || result.Events[0].Title != scoring.ContractEvents()[0].Title {
 		t.Fatal("owned vision did not preserve non-empty fixture events")
 	}
-	helperControl(t, e.llama.base, "/fixture/service-unavailable")
+	helperControl(t, e.llama.session, "/fixture/service-unavailable")
 	_, err = e.Execute(context.Background(), req, nil)
 	var diagnostic *llamaInferenceError
 	if !errors.As(err, &diagnostic) || diagnostic.kind != scoring.ErrorKindHTTP || diagnostic.statusCode != 503 || diagnostic.attempts != 1 {
 		t.Fatalf("vision retryable HTTP failure was not single-attempt: %v", err)
 	}
-	if e.llama.process != nil {
+	if e.llama.session != nil {
 		t.Fatal("failed vision inference retained owned process")
 	}
 }
