@@ -131,6 +131,7 @@ scripts\run.bat W:\model_root 127.0.0.1:18120
 | `--listen` | 仅本机回环监听地址，默认 `127.0.0.1:18120` |
 | `--integration-data` | 三端发现目录；空则不启用集成 |
 | `--install-root` | 安装态组件根目录前缀 |
+| `--component-root` | 组件根目录；空则使用 `<install-root>\model-center\components`（安装部署用；本地 `bin` 运行不传） |
 | `--component-info`、`--haar-component-info` | 仅输出元数据，不扫描、不加载模型 |
 
 开发态与安装态**只使用**用户模型清单 `%USERPROFILE%\.fengshen\model_manifest.json`（`entries`：`model_id` / `path` / `bytes` / `sha256`）。安装器在安装时调用中心生成该文件；开发和本地运行也使用同一文件，可手动执行 `fengshen-model-center.exe --write-model-manifest "D:\weights;D:\other"` 生成。中心按清单条目盘点与绑定，不再扫描目录，也不再使用 `registrations.json` 或 `resource-layout.json`。

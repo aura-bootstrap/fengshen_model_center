@@ -68,9 +68,9 @@ func NewManager(root, store string, manifest modelmanifest.Manifest) (*Manager, 
 }
 func newManagerAt(root, store string, manifest modelmanifest.Manifest, kind string) (*Manager, error) {
 	raw, _ := json.Marshal(manifest)
-	return newManagerWithInstallRoot(root, store, manifest, modelmanifest.Revision(raw), "", "", kind, "")
+	return newManagerWithInstallRoot(root, store, manifest, modelmanifest.Revision(raw), "", "", kind, "", "")
 }
-func newManagerWithInstallRoot(root, store string, manifest modelmanifest.Manifest, revision uint64, manifestErr, manifestPath, kind, installRoot string) (*Manager, error) {
+func newManagerWithInstallRoot(root, store string, manifest modelmanifest.Manifest, revision uint64, manifestErr, manifestPath, kind, installRoot, componentRoot string) (*Manager, error) {
 	if root == "" {
 		var e error
 		root, e = os.Getwd()
@@ -102,7 +102,12 @@ func newManagerWithInstallRoot(root, store string, manifest modelmanifest.Manife
 		projectScope.Close()
 		return nil, failure("root_invalid", "组件安装根目录无效", 422)
 	}
-	componentRoot := filepath.Join(installRoot, "model-center", "components")
+	if componentRoot == "" {
+		componentRoot = filepath.Join(installRoot, "model-center", "components")
+	} else if e = safefs.ValidatePath(componentRoot); e != nil {
+		projectScope.Close()
+		return nil, failure("root_invalid", "组件根目录无效", 422)
+	}
 	ctx, stop := context.WithCancel(context.Background())
 	m := &Manager{root: root, componentRoot: componentRoot, projectScope: projectScope, manifest: manifest, manifestPath: manifestPath, manifestRevision: revision, manifestError: manifestErr, ctx: ctx, stop: stop, inventories: map[string]*Inventory{}, gone: map[string]bool{}, operations: map[string]*Operation{}, cursors: map[string]pageCursor{}, scanEntries: 100000, scanDepth: 64, scanTimeout: 10 * time.Minute, verifyTimeout: 30 * time.Minute, components: components.New(componentRoot)}
 	m.registrySnap, m.manifestFiles = syntheticSnapshot(manifest, revision, manifestErr)

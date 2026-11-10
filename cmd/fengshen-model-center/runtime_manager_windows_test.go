@@ -148,7 +148,7 @@ func newRuntimeBindingFixture(t *testing.T) runtimeBindingFixture {
 			t.Fatal(err)
 		}
 	}
-	m, err := newManagerWithInstallRoot(project, t.TempDir(), testManifest(t), 0, "", "", "development", install)
+	m, err := newManagerWithInstallRoot(project, t.TempDir(), testManifest(t), 0, "", "", "development", install, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -627,7 +627,7 @@ func TestRuntimeComponentsUseInstallRoot(t *testing.T) {
 		}
 	}
 	install := t.TempDir()
-	m, err := newManagerWithInstallRoot(project, t.TempDir(), testManifest(t), 0, "", "", "development", install)
+	m, err := newManagerWithInstallRoot(project, t.TempDir(), testManifest(t), 0, "", "", "development", install, "")
 	if err != nil {
 		t.Fatal(err)
 	}

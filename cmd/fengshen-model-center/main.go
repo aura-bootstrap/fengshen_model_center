@@ -30,6 +30,7 @@ func main() {
 	data := flag.String("data", "", "独立路径登记目录")
 	integrationData := flag.String("integration-data", "", "独立发现目录；空则不启用三端只读集成")
 	installRoot := flag.String("install-root", "", "组件安装根目录")
+	componentRoot := flag.String("component-root", "", "组件根目录；空则使用安装根下的 model-center/components")
 	info := flag.Bool("component-info", false, "仅输出组件元数据，不扫描或加载模型")
 	haarInfo := flag.Bool("haar-component-info", false, "仅输出内嵌 Haar 组件元数据，不扫描或加载模型")
 	writeManifest := flag.String("write-model-manifest", "", "从分号分隔的模型根目录生成用户模型清单并退出")
@@ -57,12 +58,12 @@ func main() {
 		}
 		return
 	}
-	if err := run(*listen, *root, *rootKind, *data, *integrationData, *installRoot); err != nil {
+	if err := run(*listen, *root, *rootKind, *data, *integrationData, *installRoot, *componentRoot); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(listen, root, rootKind, data, integrationData, installRoot string) error {
+func run(listen, root, rootKind, data, integrationData, installRoot, componentRoot string) error {
 	if err := validateListen(listen); err != nil {
 		return err
 	}
@@ -90,7 +91,7 @@ func run(listen, root, rootKind, data, integrationData, installRoot string) erro
 	if installRoot == "" {
 		installRoot = resolved
 	}
-	manager, err := newManagerWithInstallRoot(resolved, data, manifest, manifestRevision, manifestError, manifestPath, rootKind, installRoot)
+	manager, err := newManagerWithInstallRoot(resolved, data, manifest, manifestRevision, manifestError, manifestPath, rootKind, installRoot, componentRoot)
 	if err != nil {
 		return err
 	}
