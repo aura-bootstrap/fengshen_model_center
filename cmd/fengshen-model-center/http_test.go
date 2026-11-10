@@ -372,12 +372,11 @@ func TestHTTPRoutesAndStaticWhitelist(t *testing.T) {
 }
 
 func TestResolveRootStrict(t *testing.T) {
-	if _, err := resolveRoot(t.TempDir()); err == nil {
-		t.Fatal("arbitrary directory accepted")
-	}
-	m := httpManager(t)
-	if _, err := resolveRoot(m.root); err != nil {
+	if _, err := resolveRoot(t.TempDir()); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := resolveRoot(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("missing directory accepted")
 	}
 	for _, address := range []string{"0.0.0.0:1", "localhost:1", "example.com:1", "192.168.1.1:1"} {
 		if err := validateListen(address); err == nil {

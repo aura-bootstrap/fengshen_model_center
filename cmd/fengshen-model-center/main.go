@@ -242,28 +242,15 @@ func validateListen(address string) error {
 }
 
 func resolveRoot(path string) (string, error) {
-	if path != "" {
-		absolute, err := filepath.Abs(path)
-		if err != nil {
-			return "", err
-		}
-		if !validProject(absolute) {
-			return "", fmt.Errorf("项目根目录无效，缺少 sidecar 或 models 目录")
-		}
-		return absolute, nil
+	if path == "" {
+		return os.Getwd()
 	}
-	path, err := os.Getwd()
+	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("项目根目录无效")
 	}
-	for {
-		if validProject(path) {
-			return path, nil
-		}
-		parent := filepath.Dir(path)
-		if parent == path {
-			return "", fmt.Errorf("请从项目目录启动，或使用 -root 指定项目根目录")
-		}
-		path = parent
+	if info, err := os.Stat(absolute); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("项目根目录不存在")
 	}
+	return absolute, nil
 }

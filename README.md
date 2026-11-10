@@ -36,12 +36,9 @@
 │  ├─ shim/                     # shim 的 HTTP/WS 服务与旧协议桥
 │  └─ upstream/                 # 复制自 generation_server 的依赖闭包（非测试源码）
 ├─ vendor/                      # 唯一第三方依赖（WebSocket 库）离线 vendored
-├─ assets/haar/                 # OpenCV Haar 正/侧脸模型
 ├─ components-src/              # llama-runtime / whisper-batch / whisper-stream 原生源码
 ├─ installer/                   # PowerShell 构建/测试脚本
 ├─ sidecar/                     # 冻结 runner；权重与 venv 不入库
-├─ docs/specs/                  # 迁移前的需求/设计/任务文档
-├─ models/                      # 开发态默认扫描根（空）
 └─ .github/workflows/ci.yml
 ```
 
@@ -70,7 +67,7 @@ go run ./cmd/build -mode manifest -root <目录> -template <模板>
 
 | 参数 | 说明 |
 |---|---|
-| `--root` | 开发根或受控安装根；开发态需包含 `sidecar` 与 `models` 目录 |
+| `--root` | 项目根或受控安装根；模型文件路径全部来自用户模型清单 |
 | `--root-kind` | `development`（默认）或 `installed` |
 | `--data` | 绑定存储目录，默认 `%AppData%\FengshenSlicer\model-center` |
 | `--listen` | 仅本机回环监听地址，默认 `127.0.0.1:18120` |

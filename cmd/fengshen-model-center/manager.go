@@ -145,15 +145,6 @@ func syntheticSnapshot(manifest modelmanifest.Manifest, revision uint64, manifes
 	return snap, files
 }
 
-func validProject(root string) bool {
-	for _, p := range []string{"sidecar", "models"} {
-		s, e := os.Stat(filepath.Join(root, filepath.FromSlash(p)))
-		if e != nil || !s.IsDir() {
-			return false
-		}
-	}
-	return true
-}
 func validateRegistration(id, path string) (registry.Registration, error) {
 	model, ok := findModel(id)
 	if !ok {

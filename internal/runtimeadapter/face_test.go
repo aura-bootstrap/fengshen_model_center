@@ -69,7 +69,11 @@ func TestFaceRealSharedHaar(t *testing.T) {
 	if os.Getenv("FENGSHEN_TEST_REAL_HAAR") != "1" {
 		t.Skip("set FENGSHEN_TEST_REAL_HAAR=1 for actual bound XML/JPEG inference")
 	}
-	root, err := filepath.Abs("../../assets/haar")
+	fixture := os.Getenv("FENGSHEN_HAAR_TEST_DIR")
+	if fixture == "" {
+		t.Skip("set FENGSHEN_HAAR_TEST_DIR to a directory containing the Haar XMLs")
+	}
+	root, err := filepath.Abs(fixture)
 	if err != nil {
 		t.Fatal(err)
 	}

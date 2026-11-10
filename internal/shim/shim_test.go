@@ -31,7 +31,7 @@ func authHeader() http.Header {
 }
 
 func TestAuthBoundary(t *testing.T) {
-	s, err := New(Config{Mode: ModeHaar, Token: testToken, WorkRoot: t.TempDir(), FrontalXML: haarXML(t, "haarcascade_frontalface_default.xml"), ProfileXML: haarXML(t, "haarcascade_profileface.xml")})
+	s, err := New(Config{Mode: ModeWhisperBatch, Token: testToken, Target: fakeExe(t), WorkRoot: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,11 @@ func fakeExe(t *testing.T) string {
 
 func haarXML(t *testing.T, name string) string {
 	t.Helper()
-	p, err := filepath.Abs(filepath.Join("..", "..", "assets", "haar", name))
+	dir := os.Getenv("FENGSHEN_HAAR_TEST_DIR")
+	if dir == "" {
+		t.Skip("set FENGSHEN_HAAR_TEST_DIR to a directory containing the Haar XMLs")
+	}
+	p, err := filepath.Abs(filepath.Join(dir, name))
 	if err != nil {
 		t.Fatal(err)
 	}

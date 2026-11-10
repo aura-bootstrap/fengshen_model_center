@@ -15,7 +15,6 @@ type Model struct {
 	Runtime               string     `json:"runtime"`
 	Optional              bool       `json:"optional"`
 	Patterns              []string   `json:"-"`
-	Embedded              string     `json:"-"`
 	Description           string     `json:"description"`
 	Dependencies          []string   `json:"dependencies"`
 	Components            []string   `json:"components"`
@@ -38,8 +37,8 @@ func catalog() []Model {
 		{ID: "seed-whisper", Name: "Whisper Small · 音色特征", Family: "Whisper", Category: "音色处理", Purpose: "为 Seed-VC 提取语音内容特征，不负责字幕转写。", Invocation: "Python → Transformers / PyTorch", Runtime: "Python", Optional: true, Patterns: []string{"model.safetensors"}, Description: "仅匹配 openai/whisper-small 缓存，避免将其他 safetensors 误判为 Whisper。"},
 		{ID: "campplus", Name: "CAMPPlus", Family: "CAMPPlus", Category: "音色处理", Purpose: "提取参考音频的说话人和音色特征。", Invocation: "Python → PyTorch", Runtime: "Python", Optional: true, Patterns: []string{"campplus_cn_common.bin"}, Description: "Seed-VC 音色编码子模型。"},
 		{ID: "bigvgan", Name: "BigVGAN · 22 kHz", Family: "BigVGAN", Category: "音色处理", Purpose: "将转换后的声学特征还原为音频波形。", Invocation: "Python → PyTorch", Runtime: "Python", Optional: true, Patterns: []string{"bigvgan_generator.pt"}, Description: "nvidia/bigvgan_v2_22khz_80band_256x；当前推理不要求自定义 CUDA kernel。"},
-		{ID: "haar-frontal", Name: "Haar · 正脸检测", Family: "OpenCV Haar", Category: "人脸检测", Purpose: "检测人物参考图是否包含正脸。", Invocation: "Go 直接检测", Runtime: "Go", Embedded: filepath.FromSlash("assets/haar/haarcascade_frontalface_default.xml"), Description: "OpenCV 格式模型，由 Go 实现读取和检测；产品构建时嵌入程序。"},
-		{ID: "haar-profile", Name: "Haar · 侧脸检测", Family: "OpenCV Haar", Category: "人脸检测", Purpose: "辅助区分侧脸与没有人脸。", Invocation: "Go 直接检测", Runtime: "Go", Embedded: filepath.FromSlash("assets/haar/haarcascade_profileface.xml"), Description: "OpenCV 格式模型，由 Go 实现读取和检测；产品构建时嵌入程序。"},
+		{ID: "haar-frontal", Name: "Haar · 正脸检测", Family: "OpenCV Haar", Category: "人脸检测", Purpose: "检测人物参考图是否包含正脸。", Invocation: "Go 直接检测", Runtime: "Go", Patterns: []string{"haarcascade_frontalface_default.xml"}, Description: "OpenCV 格式模型，由 shim 读取模型清单绑定的 XML；缺失时只报告未发现。"},
+		{ID: "haar-profile", Name: "Haar · 侧脸检测", Family: "OpenCV Haar", Category: "人脸检测", Purpose: "辅助区分侧脸与没有人脸。", Invocation: "Go 直接检测", Runtime: "Go", Patterns: []string{"haarcascade_profileface.xml"}, Description: "OpenCV 格式模型，由 shim 读取模型清单绑定的 XML；缺失时只报告未发现。"},
 	}
 	for i := range models {
 		m := &models[i]
@@ -97,9 +96,6 @@ func catalog() []Model {
 		default:
 			m.AllowedExtensions = []string{".xml"}
 			m.Consumer = "haar-consumer"
-			m.Patterns = []string{filepath.Base(m.Embedded)}
-			m.Components = append([]string{}, m.Patterns...)
-			m.RecognitionRules = append([]string{}, m.Patterns...)
 		}
 		for _, parts := range m.ComponentAlternatives {
 			for _, part := range parts {

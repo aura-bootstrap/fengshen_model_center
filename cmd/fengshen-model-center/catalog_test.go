@@ -62,8 +62,8 @@ func TestCatalogContract(t *testing.T) {
 			if !ok || !reflect.DeepEqual(found, m) {
 				t.Fatal("lookup differs from catalog")
 			}
-			if strings.HasPrefix(m.ID, "haar-") && filepath.Base(m.Embedded) != want.components[0] {
-				t.Fatal("Haar resource mismatch", m.Embedded)
+			if strings.HasPrefix(m.ID, "haar-") && (len(m.Components) != 1 || m.Components[0] != want.components[0]) {
+				t.Fatal("Haar resource mismatch", m.Components)
 			}
 		})
 	}
