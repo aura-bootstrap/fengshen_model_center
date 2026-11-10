@@ -17,6 +17,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: use long temp path
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force C:\mc-temp | Out-Null
+          "TEMP=C:\mc-temp" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TMP=C:\mc-temp" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: go vet
         run: go vet ./...
       - name: go test
