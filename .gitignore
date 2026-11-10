@@ -1,0 +1,32 @@
+# 构建产物与运行时数据
+*.exe
+*.dll
+bin/
+output/
+warehouse/
+release/
+config.json
+app.lock
+*.log
+
+# 模型权重与运行环境不入库
+*.gguf
+*.ggml
+*.th
+*.pth
+*.pt
+*.safetensors
+models/*
+!models/.gitkeep
+sidecar/seed-vc/*
+!sidecar/seed-vc/.gitkeep
+sidecar/venv/
+__pycache__/
+*.pyc
+
+# 本地工具与缓存
+.qoder/
+.kiro/
+tmp/
+Thumbs.db
+Desktop.ini

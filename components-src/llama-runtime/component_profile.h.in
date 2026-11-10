@@ -1,0 +1,4 @@
+#pragma once
+#define LLAMA_COMPONENT_VERSION "@profile_version@"
+#define LLAMA_COMPONENT_PROFILE "@LLAMA_RUNTIME_PROFILE@"
+#define LLAMA_COMPONENT_DRIVER "@profile_driver@"

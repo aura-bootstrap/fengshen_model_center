@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="model-center-token" content="__SESSION_TOKEN__">
+  <meta name="description" content="本机模型资产、受限路径登记与交付组件证据工作台。">
+  <title>本地模型中心 · 峰神切片</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#workspace">跳至模型工作区</a>
+  <header>
+    <div><div class="eyebrow">峰神切片 / LOCAL ASSETS</div><h1>本地模型中心</h1><p class="muted">盘点文件，分清证据。不把发现当作可用。</p></div>
+    <div class="actions"><button id="reload" type="button">重新读取状态</button><button id="scan" class="primary" type="button">刷新扫描</button></div>
+  </header>
+  <main>
+    <div id="error" class="panel" role="alert" hidden></div>
+    <div id="storage-diagnostic" class="panel notice" role="status" aria-live="polite" hidden></div>
+    <p id="notice" role="status" aria-live="polite"></p>
+    <section class="panel notice" aria-label="管理边界"><p>仅在受限目录盘点和登记；不写回客户端配置，不下载、不清理、不执行组件、不推理。当前版本自定义 HTTP 模型接入入口已隐藏，模型服务未检测。</p><div>项目根目录：<span id="project-root" class="path">尚未取得</span></div></section>
+    <section id="operation" class="panel" aria-label="活动操作" hidden><div class="actions"><strong id="operation-text" role="status" aria-live="polite"></strong><button id="cancel" type="button">取消当前操作</button></div></section>
+    <section aria-label="盘点概览"><div id="stats" class="stats"></div><p id="inventory-meta" class="muted">尚未扫描 · 十二项静态目录可供查阅</p><p id="history" class="muted"></p><div id="history-actions" class="actions"></div></section>
+    <div id="workspace" class="workspace" tabindex="-1">
+      <section class="panel" aria-labelledby="models-heading"><h2 id="models-heading">模型目录 <span id="model-count" class="muted"></span></h2>
+        <div class="filters">
+          <label class="search">搜索名称、家族或用途<input id="search" type="search" placeholder="例如 Whisper、音色、人脸" autocomplete="off"></label>
+          <label>功能类别<select id="category"><option value="">全部类别</option></select></label>
+          <label>运行环境<select id="runtime"><option value="">全部环境</option></select></label>
+          <label>文件状态<select id="status"><option value="">全部状态</option></select></label>
+        </div>
+        <button id="clear" type="button">清除搜索与筛选</button>
+        <div id="models" class="list"></div>
+        <div id="empty" class="empty" hidden><h3>没有匹配的目录项</h3><p>请调整条件，或使用上方“清除搜索与筛选”。</p></div>
+      </section>
+      <section id="detail" class="panel" aria-labelledby="detail-heading"><h2 id="detail-heading" tabindex="-1">模型详情</h2><div id="detail-body"><p class="muted">选择目录项以查看依赖、组成与文件。</p></div></section>
+    </div>
+    <section class="panel" aria-labelledby="scope-heading"><h2 id="scope-heading">扫描范围与诊断</h2><p class="muted">只扫描默认已知位置及该模型明确登记的位置，不遍历整盘。范围可能包含相互重叠的文件，不能简单相加。</p><div id="scopes">尚未扫描</div></section>
+    <section class="panel" aria-labelledby="components-heading"><h2 id="components-heading">交付组件证据</h2><p class="muted">模型权重与执行组件分开。源码、开发 venv 不代表已交付；这里只显式校验清单，不安装、不构建、不执行。协议声明不等于运行验证，入口测试不等于推理测试。</p><div id="components" class="components"><p>尚未取得组件证据</p></div></section>
+    <section class="panel notice" aria-label="容量与摘要说明"><h2>数字与证据的边界</h2><p>以上均为文件逻辑磁盘大小，不是物理分配占用，也不是 RAM / VRAM 或性能需求。权重、资产范围、运行环境可能存在包含关系，不能直接相加。共享文件按可靠文件身份归并；身份有限时不能声称物理去重。同名或同大小只是重复候选，摘要相同也不代表副本可安全删除。</p><p>SHA-256 仅代表本次读取字节的指纹；未提供可信预期摘要，不代表发行方认证、无恶意内容、格式正确或推理可用。远程服务权重、纯算法能量 VAD、参考声音不计入十二项本地权重目录。</p></section>
+  </main>
+  <footer>路径登记仅用于中心盘点，不移动或修改模型，不会自动使用户版、开发版或其他消费者采用该路径。关闭页面或客户端不会停止中心服务；请在服务控制台使用 Ctrl+C 结束。</footer>
+</body>
+</html>
