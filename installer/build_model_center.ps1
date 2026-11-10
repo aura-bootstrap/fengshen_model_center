@@ -70,7 +70,7 @@ $env:GOWORK = 'off'
 $env:CGO_ENABLED = '0'
 $goVersion = (& $go version | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Go toolchain unavailable.' }
-$env:GOFLAGS = '-mod=vendor'
+$env:GOFLAGS = '-mod=readonly'
 $env:PATH = (Split-Path $go) + [IO.Path]::PathSeparator + $env:PATH
 # Resolve Go's complete dependency/embed/test graph, local replaces and compiler
 # inputs; also pin this script and the frozen entry. No mutable venv is trusted.

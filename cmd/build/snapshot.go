@@ -32,8 +32,8 @@ func nativeResourceInputs(repo string, add func(string) error) error {
 
 // snapshot uses Go's own resolved dependency and embed input lists, including
 // tests, module metadata, the compiler tree, and this pipeline's non-Go inputs.
-// It never downloads: callers set GOPROXY=off, GOTOOLCHAIN=local; dependencies
-// are vendored, so the module cache is not consulted for remote fetches.
+// It never downloads: callers set GOPROXY=off, GOTOOLCHAIN=local, and the build
+// host must pre-populate the module cache (go mod download) from go.mod/go.sum.
 func snapshot(ctx context.Context, repo, output string, engines, check bool) error {
 	goexe, err := exec.LookPath("go")
 	if err != nil {

@@ -35,7 +35,6 @@
 │  ├─ safefs/                   # Windows 安全文件系统边界
 │  ├─ shim/                     # shim 的 HTTP/WS 服务与旧协议桥
 │  └─ upstream/                 # 复制自 generation_server 的依赖闭包（非测试源码）
-├─ vendor/                      # 唯一第三方依赖（WebSocket 库）离线 vendored
 ├─ components-src/              # llama-runtime / whisper-batch / whisper-stream 原生源码
 ├─ installer/                   # PowerShell 构建/测试脚本
 ├─ sidecar/                     # 冻结 runner；权重与 venv 不入库
@@ -44,7 +43,7 @@
 
 ## 构建
 
-要求：Windows x64、Go 1.25+（`go.mod` 已固定语言版本）。唯一第三方依赖是 HTTP/WS 所需的 `github.com/coder/websocket`，已 vendored 到 `vendor/`，离线可构建。
+要求：Windows x64、Go 1.25+（`go.mod` 已固定语言版本）。唯一第三方依赖是 HTTP/WS 所需的 `github.com/coder/websocket`，由 `go.mod`/`go.sum` 锁定；首次构建前执行 `go mod download`（或配置 GOPROXY），仓库不包含 `vendor/`。
 
 ```powershell
 go build -o fengshen-model-center.exe ./cmd/fengshen-model-center
