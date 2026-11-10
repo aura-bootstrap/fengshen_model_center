@@ -43,7 +43,7 @@
 │  ├─ safefs/                   # Windows 安全文件系统边界
 │  ├─ shim/                     # shim 的 HTTP/WS 服务与旧协议桥
 │  └─ upstream/                 # 复制自 generation_server 的依赖闭包（非测试源码）
-├─ scripts/                     # 一键构建、bin 平铺安装、启动与测试
+├─ scripts/                     # 一键构建、bin 平铺安装、启动/停止与测试
 ├─ build/                       # 本地构建产物（gitignore，不随仓库）
 ├─ bin/                         # 本地可运行部署目录（gitignore，不随仓库）
 └─ docs/                        # 上游同步等说明
@@ -110,7 +110,7 @@ scripts\run.bat W:\model_root 127.0.0.1:18120
 
 `scripts\run.bat` 直接读取 `bin\fengshen-model-center.exe`，在后台启动并把中心 PID 写入 `%USERPROFILE%\.fengshen\model_center.pid`；输出写入同目录的 `model_center.out.log` / `model_center.err.log`。重复执行会检测已在运行的实例并直接返回。启动脚本不复制进 `bin\`。
 
-停止服务：读取 PID 文件后执行 `taskkill /T /F /PID <pid>`。
+停止服务：执行 `scripts\stop.bat`，它会读取 PID 文件并结束中心进程（含子进程），随后删除 PID 文件。
 
 用户目录数据不复制进 `bin\`：清单读取真实用户目录 `%USERPROFILE%\.fengshen\model_manifest.json`（仅当清单不存在时才用给定 `model_root` 生成），运行数据写入 `%APPDATA%\FengshenSlicer\model-center`。`model_root` 只读使用，不复制、不修改。重新安装会覆盖 `bin\` 根下的同名文件。
 
