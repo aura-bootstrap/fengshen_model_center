@@ -167,7 +167,7 @@
       ['运行环境逻辑大小', metricText(inventory?.runtime_size), '与权重分栏，不相加']
     ]) { const node = el('article', undefined, 'stat'); node.append(el('span', name, 'muted'), el('strong', value), el('small', hint)); stats.append(node); }
     $('inventory-meta').textContent = inventory ? `当前查看 ${inventory.id} · ${inventory.complete ? '完整盘点' : '部分结果 / 未完成'}${inventory.stale || inventory.registry_revision !== state.registry.revision ? ' · 已过期，需重新扫描' : ''} · 开始 ${date(inventory.started_at)} · 结束 ${date(inventory.finished_at)}` : '尚未扫描 · 十二项静态目录可供查阅';
-    $('history').textContent = `登记版本 ${state.registry.revision} · 上次完整盘点：${state.lastCompleteInventory?.id || '无'} · 最近尝试：${state.lastAttempt ? `${label(state.lastAttempt.kind)} / ${label(state.lastAttempt.status)}` : '无'}`;
+    $('history').textContent = `清单版本 ${state.registry.revision} · 上次完整盘点：${state.lastCompleteInventory?.id || '无'} · 最近尝试：${state.lastAttempt ? `${label(state.lastAttempt.kind)} / ${label(state.lastAttempt.status)}` : '无'}`;
     const historyActions = $('history-actions'); historyActions.replaceChildren();
     for (const [title, id] of [['查看上次完整盘点', state.lastCompleteInventory?.id], ['查看最近部分 / 当前盘点', state.currentID]]) {
       if (id && id !== inventory?.id) historyActions.append(button(title, () => void viewInventory(id)));
@@ -201,7 +201,7 @@
     }
     const storage = $('storage-diagnostic');
     storage.hidden = !state.storage_error;
-    storage.textContent = state.storage_error ? `${storageFrozen(state.storage_error) ? '登记存储已冻结：新写操作已禁用；保留旧登记，请核对存储并重新读取状态。' : '登记存储诊断：未因此冻结写入；可重新登记或取消中心登记（DELETE）以修复路径问题。'}\n${state.storage_error}` : '';
+    storage.textContent = state.storage_error ? `${storageFrozen(state.storage_error) ? '模型清单已冻结：新写操作已禁用；请核对清单文件并重新读取状态。' : '模型清单诊断：请检查 ~/.fengshen/model_manifest.json 并重新读取状态。'}\n${state.storage_error}` : '';
     if (state.lastAttempt?.diagnostics?.length) appendDiagnostics(scopes, state.lastAttempt.diagnostics);
   }
   function appendDiagnostics(parent, diagnostics) {
@@ -261,20 +261,7 @@
     const rules = el('details'); rules.append(el('summary', '识别规则与允许类型'));
     for (const rule of m.recognition_rules || []) rules.append(el('p', rule, 'path'));
     rules.append(el('p', `允许文件类型：${(m.allowed_extensions || []).join('、') || '以服务端规则为准'}`)); composition.append(rules);
-    renderRegistration(section(body, '受限路径登记'), m);
     const files = section(body, '组成文件与 SHA-256'); files.id = 'files'; renderFiles(); controls();
-  }
-  function renderRegistration(parent, m) {
-    parent.append(el('p', '只授权登记的绝对文件或目录，不包含父目录或相邻目录；只用于中心，不写回消费者。', 'muted'));
-    const registration = state.registry.registrations?.[m.id];
-    if (registration) { parent.append(el('p', '当前登记（存在不等于身份已确认）：')); pathView(parent, registration.resolved_path || registration.input_path || String(registration)); }
-    else parent.append(el('p', '未登记：使用默认受限发现规则。', 'muted'));
-    const form = el('form'); const pathLabel = el('label', '本机绝对文件或目录路径'); const input = el('input'); input.type = 'text'; input.id = 'registration-path'; input.name = 'path'; input.required = true; input.autocomplete = 'off'; input.spellcheck = false;
-    input.value = state.drafts.has(m.id) ? state.drafts.get(m.id) : registration?.input_path || registration?.resolved_path || (typeof registration === 'string' ? registration : '');
-    input.addEventListener('input', () => state.drafts.set(m.id, input.value)); pathLabel.htmlFor = input.id; pathLabel.append(input);
-    const save = el('button', '保存登记并新扫描'); save.type = 'submit'; save.dataset.write = '';
-    form.append(pathLabel, save); form.addEventListener('submit', event => { event.preventDefault(); if (!input.value.trim()) { input.reportValidity(); return; } void registrationWrite(m.id, 'PUT', input.value); }); parent.append(form);
-    if (registration) { const remove = button('取消中心登记并新扫描', () => void registrationWrite(m.id, 'DELETE')); remove.dataset.write = ''; parent.append(remove, el('p', '仅取消中心登记，不删除文件。恢复默认发现后会发起新扫描。', 'muted')); }
   }
   function renderFiles() {
     const parent = $('files'); if (!parent) return; parent.replaceChildren(el('h3', '组成文件与 SHA-256'));
@@ -408,23 +395,6 @@
     state.busy = true; controls(); clearError();
     try { const op = await api(path, 'POST', body); state.active = op; state.lastAttempt = op; renderOperation(op); poller.start(op.id); }
     catch (error) { await reconcile(error); }
-    finally { state.busy = false; controls(); }
-  }
-  async function registrationWrite(model, method, path) {
-    if (locked() || active() || storageFrozen(state.storage_error)) return;
-    state.busy = true; controls(); clearError();
-    const body = { expected_revision: state.registry.revision }; if (method === 'PUT') body.path = path;
-    try {
-      const snapshot = await api(`/api/registrations/${idPath(model)}`, method, body);
-      state.drafts.delete(model); state.registry = snapshot; if (state.inventory) state.inventory = { ...state.inventory, stale: true };
-      notice('中心登记已保存，模型文件未修改。正在核对存储诊断并以新登记版本发起受限扫描。');
-      // Registry responses do not include storage diagnostics; refresh state rather than guessing that repairs cleared them.
-      await readState();
-      if (state.sessionInvalid || active() || storageFrozen(state.storage_error)) return;
-      // One explicit scan after a confirmed registry response, never after an ambiguous write.
-      const op = await api('/api/operations/scan', 'POST', { registry_revision: snapshot.revision });
-      state.active = op; state.lastAttempt = op; renderOverview(); renderOperation(op); poller.start(op.id);
-    } catch (error) { await reconcile(error); }
     finally { state.busy = false; controls(); }
   }
   const poller = createPoller(id => api(`/api/operations/${idPath(id)}`), async op => {

@@ -38,7 +38,6 @@ func deliveryFixture(t *testing.T) (string, string) {
 	binary := []byte("fixture, never executed")
 	put(t, filepath.Join(dir, "fengshen-model-center.exe"), binary)
 	put(t, filepath.Join(root, filepath.FromSlash(centerPath)), binary)
-	putJSON(t, filepath.Join(root, "resource-layout.json"), resourceLayout{Schema: 1, Center: centerPath, Components: componentPath, RootKind: "installed", ModelRoots: []string{}, HaarFiles: []string{}})
 	m := components.Manifest{Schema: 1, ComponentID: "model-center", Version: "1", OS: "windows", Arch: "amd64", EntryType: "executable", Entry: "fengshen-model-center.exe", Packaging: "go", StartupReportRef: "startup-report.json"}
 	if e := generate(context.Background(), dir, m); e != nil {
 		t.Fatal(e)
@@ -118,7 +117,7 @@ func TestGenerateAndDeliveryNoDigestCycle(t *testing.T) {
 		t.Fatal("unstable delivery")
 	}
 	var d Delivery
-	if json.Unmarshal(a, &d) != nil || len(d.Files) != 4 {
+	if json.Unmarshal(a, &d) != nil || len(d.Files) != 3 {
 		t.Fatalf("%s", a)
 	}
 	var m components.Manifest
@@ -134,26 +133,17 @@ func TestGenerateAndDeliveryNoDigestCycle(t *testing.T) {
 	}
 }
 func TestDeliveryRejectsIncompleteOrInvalidArtifacts(t *testing.T) {
-	for _, name := range []string{"only-manifest", "no-exe", "no-layout", "bad-layout", "old-components-layout", "no-manifest", "bad-manifest", "no-report", "wrong-report-sha", "report-upgrades-inference", "component-mismatch", "center-mismatch", "missing-report-ref"} {
+	for _, name := range []string{"only-manifest", "no-exe", "no-manifest", "bad-manifest", "no-report", "wrong-report-sha", "report-upgrades-inference", "component-mismatch", "center-mismatch", "missing-report-ref"} {
 		t.Run(name, func(t *testing.T) {
 			root, dir := deliveryFixture(t)
-			layout := filepath.Join(root, "resource-layout.json")
 			manifest := filepath.Join(dir, "manifest.json")
 			report := filepath.Join(dir, "startup-report.json")
 			switch name {
 			case "only-manifest":
 				os.Remove(filepath.Join(root, filepath.FromSlash(centerPath)))
-				os.Remove(layout)
 				os.Remove(report)
 			case "no-exe":
 				os.Remove(filepath.Join(root, filepath.FromSlash(centerPath)))
-			case "no-layout":
-				os.Remove(layout)
-			case "bad-layout":
-				put(t, layout, []byte(`{"schema":1}`))
-			case "old-components-layout":
-				b, _ := os.ReadFile(layout)
-				put(t, layout, []byte(strings.Replace(string(b), `"model-center/components"`, `"components"`, 1)))
 			case "no-manifest":
 				os.Remove(manifest)
 			case "bad-manifest":

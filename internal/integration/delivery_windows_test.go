@@ -15,7 +15,7 @@ import (
 )
 
 func deliveryDigest(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
-func deliveryFixture(t *testing.T) (*Client, deliveryManifest, resourceLayout) {
+func deliveryFixture(t *testing.T) (*Client, deliveryManifest) {
 	t.Helper()
 	c := &Client{cfg: Config{InstallRoot: t.TempDir()}}
 	for _, rel := range []string{"model-center", "components/test", "models"} {
@@ -28,11 +28,8 @@ func deliveryFixture(t *testing.T) (*Client, deliveryManifest, resourceLayout) {
 	writeDeliveryFile(t, filepath.Join(c.cfg.InstallRoot, "components/test/manifest.json"), []byte("{}"))
 	writeDeliveryFile(t, filepath.Join(c.cfg.InstallRoot, "components/test/startup-report.json"), []byte("{}"))
 	writeDeliveryFile(t, filepath.Join(c.cfg.InstallRoot, "haar.xml"), []byte("haar"))
-	l := resourceLayout{Schema: 1, Center: centerRelative, Components: "model-center/components", RootKind: "installed", ModelRoots: []string{}, HaarFiles: []string{}}
 	d := deliveryManifest{Schema: 1, Inference: "not_tested", CleanEnvironment: "not_verified"}
-	b, _ := json.Marshal(l)
-	writeDeliveryFile(t, filepath.Join(c.cfg.InstallRoot, "resource-layout.json"), b)
-	for _, rel := range []string{centerRelative, "resource-layout.json", "components/test/manifest.json", "components/test/startup-report.json"} {
+	for _, rel := range []string{centerRelative, "components/test/manifest.json", "components/test/startup-report.json"} {
 		raw, e := os.ReadFile(filepath.Join(c.cfg.InstallRoot, rel))
 		if e != nil {
 			t.Fatal(e)
@@ -40,7 +37,7 @@ func deliveryFixture(t *testing.T) (*Client, deliveryManifest, resourceLayout) {
 		d.Files = append(d.Files, deliveryFile{rel, strconv.Itoa(len(raw)), deliveryDigest(raw)})
 	}
 	saveDelivery(t, c, d)
-	return c, d, l
+	return c, d
 }
 func writeDeliveryFile(t *testing.T, path string, b []byte) {
 	t.Helper()
@@ -57,18 +54,6 @@ func saveDelivery(t *testing.T, c *Client, d deliveryManifest) {
 	writeDeliveryFile(t, c.delivery(), b)
 	c.cfg.DeliverySHA256 = deliveryDigest(b)
 }
-func saveLayout(t *testing.T, c *Client, d *deliveryManifest, l resourceLayout) {
-	t.Helper()
-	b, _ := json.Marshal(l)
-	writeDeliveryFile(t, filepath.Join(c.cfg.InstallRoot, "resource-layout.json"), b)
-	for i := range d.Files {
-		if d.Files[i].Path == "resource-layout.json" {
-			d.Files[i].Bytes = strconv.Itoa(len(b))
-			d.Files[i].SHA256 = deliveryDigest(b)
-		}
-	}
-	saveDelivery(t, c, *d)
-}
 func TestWindowsTrustedDeliverySemanticErrors(t *testing.T) {
 	tests := map[string]func(*Client, *deliveryManifest){
 		"schema":            func(c *Client, d *deliveryManifest) { d.Schema = 2 },
@@ -84,7 +69,6 @@ func TestWindowsTrustedDeliverySemanticErrors(t *testing.T) {
 		"absolute":              func(c *Client, d *deliveryManifest) { d.Files[0].Path = c.exe() },
 		"self":                  func(c *Client, d *deliveryManifest) { d.Files[0].Path = "model-center/delivery.json" },
 		"center missing":        func(c *Client, d *deliveryManifest) { d.Files = d.Files[1:] },
-		"layout missing":        func(c *Client, d *deliveryManifest) { d.Files = append(d.Files[:1], d.Files[2:]...) },
 		"wrong exact center":    func(c *Client, d *deliveryManifest) { d.Files[0].Path = strings.ToUpper(centerRelative) },
 		"center digest binding": func(c *Client, d *deliveryManifest) { c.cfg.CenterSHA256 = strings.Repeat("a", 64) },
 		"size":                  func(c *Client, d *deliveryManifest) { d.Files[0].Bytes = "1" },
@@ -96,7 +80,7 @@ func TestWindowsTrustedDeliverySemanticErrors(t *testing.T) {
 	}
 	for name, change := range tests {
 		t.Run(name, func(t *testing.T) {
-			c, d, _ := deliveryFixture(t)
+			c, d := deliveryFixture(t)
 			change(c, &d)
 			saveDelivery(t, c, d)
 			if _, e := c.verifyDelivery(context.Background()); e == nil {
@@ -105,80 +89,10 @@ func TestWindowsTrustedDeliverySemanticErrors(t *testing.T) {
 		})
 	}
 }
-func TestWindowsDeliveryLayoutAndHash(t *testing.T) {
-	for _, name := range []string{"valid", "center", "components", "schema", "root kind", "null roots", "null haar", "root escape", "haar absolute", "root file", "haar directory", "missing root", "layout tampered", "exe tampered", "report tampered", "delivery digest", "note", "duplicate key"} {
-		t.Run(name, func(t *testing.T) {
-			c, d, l := deliveryFixture(t)
-			switch name {
-			case "center":
-				l.Center = "model-center/other.exe"
-			case "components":
-				l.Components = "other"
-			case "schema":
-				l.Schema = 2
-			case "root kind":
-				l.RootKind = "development"
-			case "null roots":
-				l.ModelRoots = nil
-			case "null haar":
-				l.HaarFiles = nil
-			case "root escape":
-				l.ModelRoots = []string{"../outside"}
-			case "haar absolute":
-				l.HaarFiles = []string{c.exe()}
-			case "root file":
-				l.ModelRoots = []string{"haar.xml"}
-			case "haar directory":
-				l.HaarFiles = []string{"models"}
-			case "missing root":
-				l.ModelRoots = []string{"absent"}
-			case "valid":
-				l.ModelRoots = []string{"models"}
-				l.HaarFiles = []string{"haar.xml"}
-			}
-			saveLayout(t, c, &d, l)
-			switch name {
-			case "layout tampered":
-				path := filepath.Join(c.cfg.InstallRoot, "resource-layout.json")
-				raw, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				raw[0] = ' '
-				writeDeliveryFile(t, path, raw)
-			case "exe tampered":
-				writeDeliveryFile(t, c.exe(), []byte(strings.Repeat("x", len("center fixture, not executable"))))
-			case "report tampered":
-				writeDeliveryFile(t, filepath.Join(c.cfg.InstallRoot, "components/test/startup-report.json"), []byte("[]"))
-			case "delivery digest":
-				c.cfg.DeliverySHA256 = strings.Repeat("a", 64)
-			case "note", "duplicate key":
-				b, _ := os.ReadFile(filepath.Join(c.cfg.InstallRoot, "resource-layout.json"))
-				field := `"note":"forbidden",`
-				if name == "duplicate key" {
-					field = `"schema":1,`
-				}
-				b = append([]byte("{"+field), b[1:]...)
-				writeDeliveryFile(t, filepath.Join(c.cfg.InstallRoot, "resource-layout.json"), b)
-				d.Files[1].Bytes = strconv.Itoa(len(b))
-				d.Files[1].SHA256 = deliveryDigest(b)
-				saveDelivery(t, c, d)
-			}
-			_, e := c.verifyDelivery(context.Background())
-			if name == "valid" {
-				if e != nil {
-					t.Fatal(e)
-				}
-			} else if e == nil {
-				t.Fatal("accepted invalid layout/hash")
-			}
-		})
-	}
-}
 func TestWindowsDeliveryStrictJSON(t *testing.T) {
 	for _, suffix := range []string{`,"extra":true}`, `,"schema":1}`, `} {}`} {
 		t.Run(suffix, func(t *testing.T) {
-			c, _, _ := deliveryFixture(t)
+			c, _ := deliveryFixture(t)
 			b, _ := os.ReadFile(c.delivery())
 			b = append(b[:len(b)-1], []byte(suffix)...)
 			writeDeliveryFile(t, c.delivery(), b)
@@ -190,12 +104,9 @@ func TestWindowsDeliveryStrictJSON(t *testing.T) {
 	}
 }
 func TestWindowsDeliveryCacheInvalidation(t *testing.T) {
-	for _, rel := range []string{"resource-layout.json", "components/test/manifest.json", "components/test/startup-report.json", "model-center/delivery.json", centerRelative, "haar.xml", "models"} {
+	for _, rel := range []string{"components/test/manifest.json", "components/test/startup-report.json", "model-center/delivery.json", centerRelative} {
 		t.Run(rel, func(t *testing.T) {
-			c, d, l := deliveryFixture(t)
-			l.ModelRoots = []string{"models"}
-			l.HaarFiles = []string{"haar.xml"}
-			saveLayout(t, c, &d, l)
+			c, _ := deliveryFixture(t)
 			files, e := c.verifyDelivery(context.Background())
 			if e != nil {
 				t.Fatal(e)
@@ -210,13 +121,7 @@ func TestWindowsDeliveryCacheInvalidation(t *testing.T) {
 				t.Fatal(e)
 			}
 			path := filepath.Join(c.cfg.InstallRoot, rel)
-			if rel == "models" {
-				if e = os.Remove(path); e != nil {
-					t.Fatal(e)
-				}
-			} else {
-				writeDeliveryFile(t, path, []byte("changed payload"))
-			}
+			writeDeliveryFile(t, path, []byte("changed payload"))
 			if e = c.verify(context.Background(), p, false); e != ErrUnconfirmed {
 				t.Fatalf("cache not invalidated: %v", e)
 			}
@@ -224,25 +129,5 @@ func TestWindowsDeliveryCacheInvalidation(t *testing.T) {
 				t.Fatal("stale cache retained")
 			}
 		})
-	}
-}
-func TestWindowsDeliveryRejectLinks(t *testing.T) {
-	c, d, l := deliveryFixture(t)
-	target := t.TempDir()
-	link := filepath.Join(c.cfg.InstallRoot, "linked")
-	if e := os.Symlink(target, link); e != nil {
-		t.Skipf("symlink unavailable: %v", e)
-	}
-	l.ModelRoots = []string{"linked"}
-	saveLayout(t, c, &d, l)
-	if _, e := c.verifyDelivery(context.Background()); e == nil {
-		t.Fatal("accepted linked model root")
-	}
-	l.ModelRoots = []string{}
-	l.HaarFiles = []string{"linked/haar.xml"}
-	writeDeliveryFile(t, filepath.Join(target, "haar.xml"), []byte("haar"))
-	saveLayout(t, c, &d, l)
-	if _, e := c.verifyDelivery(context.Background()); e == nil {
-		t.Fatal("accepted linked haar ancestor")
 	}
 }

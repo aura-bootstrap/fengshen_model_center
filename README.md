@@ -1,6 +1,6 @@
 # 峰神模型中心（fengshen_model_center）
 
-峰神切片生成器的本地模型中心：只读盘点本地模型资产、登记外置权重路径、核验二进制组件交付证据，并在本机回环地址提供管理界面与只读 HTTP 汇总报告。本仓库是从 `fengshen_slicer` 独立出来的自包含项目，不依赖其工作副本即可构建、测试与运行。中心与所有执行器之间的通信只走本机回环 HTTP/WS，旧 stdio/CLI 协议被隔离在 shim 进程内部。
+峰神切片生成器的本地模型中心：按用户清单盘点本地模型资产、核验二进制组件交付证据，并在本机回环地址提供管理界面与只读 HTTP 汇总报告。本仓库是从 `fengshen_slicer` 独立出来的自包含项目，不依赖其工作副本即可构建、测试与运行。中心与所有执行器之间的通信只走本机回环 HTTP/WS，旧 stdio/CLI 协议被隔离在 shim 进程内部。
 
 ## 能力边界
 
@@ -26,7 +26,7 @@
 │  ├─ highlightclient/          # 高光评分/转写/媒体 HTTP 客户端
 │  ├─ integration/              # 三端只读集成（会话、快照、健康）
 │  ├─ mediaclient/
-│  ├─ registry/                 # 外置路径登记存储
+│  ├─ registry/                 # 清单快照类型（不再持久化）
 │  ├─ runtimeadapter/           # 编排：Whisper/音色/Haar/llama 全部经 shim 调用
 │  ├─ runtimeassets/            # 运行时资产分块存储
 │  ├─ runtimehttp/              # 对外运行时上传/下载 HTTP
@@ -63,7 +63,7 @@ go run ./cmd/build -mode manifest -root <目录> -template <模板>
 ## 运行
 
 ```powershell
-.\fengshen-model-center.exe --root <开发根或安装根> --data <登记数据目录> --listen 127.0.0.1:18120
+.\fengshen-model-center.exe --root <开发根或安装根> --data <绑定数据目录> --listen 127.0.0.1:18120
 ```
 
 常用参数：
@@ -72,13 +72,13 @@ go run ./cmd/build -mode manifest -root <目录> -template <模板>
 |---|---|
 | `--root` | 开发根或受控安装根；开发态需包含 `sidecar` 与 `models` 目录 |
 | `--root-kind` | `development`（默认）或 `installed` |
-| `--data` | 独立路径登记目录，默认 `%AppData%\FengshenSlicer\model-center` |
+| `--data` | 绑定存储目录，默认 `%AppData%\FengshenSlicer\model-center` |
 | `--listen` | 仅本机回环监听地址，默认 `127.0.0.1:18120` |
 | `--integration-data` | 三端可信发现目录；空则不启用集成 |
 | `--install-root`、`--center-sha256`、`--delivery-sha256` | 安装态可信启动参数 |
 | `--component-info`、`--haar-component-info` | 仅输出元数据，不扫描、不加载模型 |
 
-开发态默认扫描根：`sidecar/seed-vc/checkpoints`、`models`、`~/.cache/torch/hub/checkpoints`，以及本机权重库 `W:\model_weght_hub`（目录存在时自动加入；可用 `FENGSHEN_MODEL_WEIGHT_HUB` 覆盖）。权重不入库，也可通过界面登记外置路径。
+开发态与安装态**只使用**用户模型清单 `%USERPROFILE%\.fengshen\model_manifest.json`（`entries`：`model_id` / `path` / `bytes` / `sha256`）。安装器在安装时调用中心生成该文件；开发和本地运行也使用同一文件，可手动执行 `fengshen-model-center.exe --write-model-manifest "D:\weights;D:\other"` 生成。中心按清单条目盘点与绑定，不再扫描目录，也不再使用 `registrations.json` 或 `resource-layout.json`。
 
 ## 内部通信与隔离（HTTP/WS）
 

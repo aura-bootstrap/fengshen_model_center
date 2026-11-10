@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/modelmanifest"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeadapter"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeassets"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimehttp"
@@ -40,6 +41,7 @@ func main() {
 	deliverySHA := flag.String("delivery-sha256", "", "可信启动配置中的交付摘要")
 	info := flag.Bool("component-info", false, "仅输出组件元数据，不扫描或加载模型")
 	haarInfo := flag.Bool("haar-component-info", false, "仅输出内嵌 Haar 组件元数据，不扫描或加载模型")
+	writeManifest := flag.String("write-model-manifest", "", "从分号分隔的模型根目录生成用户模型清单并退出")
 	flag.Parse()
 	haarInfoRequested := false
 	flag.Visit(func(f *flag.Flag) {
@@ -58,36 +60,22 @@ func main() {
 		writeComponentInfo(os.Stdout)
 		return
 	}
+	if *writeManifest != "" {
+		if err := writeModelManifest(splitRoots(*writeManifest)); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if err := run(*listen, *root, *rootKind, *data, *integrationData, *installRoot, *centerSHA, *deliverySHA); err != nil {
 		log.Fatal(err)
 	}
-}
-
-// weightHubRoot returns the optional development weight store. The environment
-// variable overrides the machine-local default; only an existing directory is
-// accepted so other installations are unaffected.
-func weightHubRoot() string {
-	if configured := os.Getenv("FENGSHEN_MODEL_WEIGHT_HUB"); configured != "" {
-		if !filepath.IsAbs(configured) {
-			return ""
-		}
-		if info, err := os.Stat(configured); err == nil && info.IsDir() {
-			return filepath.Clean(configured)
-		}
-		return ""
-	}
-	const machineDefault = `W:\model_weght_hub`
-	if info, err := os.Stat(machineDefault); err == nil && info.IsDir() {
-		return machineDefault
-	}
-	return ""
 }
 
 func run(listen, root, rootKind, data, integrationData, installRoot, centerSHA, deliverySHA string) error {
 	if err := validateListen(listen); err != nil {
 		return err
 	}
-	resolved, layout, err := resolveStartupRoot(root, rootKind)
+	resolved, err := resolveStartupRoot(root, rootKind)
 	if err != nil {
 		return err
 	}
@@ -98,29 +86,24 @@ func run(listen, root, rootKind, data, integrationData, installRoot, centerSHA, 
 		}
 		data = filepath.Join(base, "FengshenSlicer", "model-center")
 	}
-	roots := []string{filepath.Join(resolved, "sidecar", "seed-vc", "checkpoints"), filepath.Join(resolved, "models")}
-	if rootKind == "installed" {
-		roots = nil
-		for _, rel := range layout.ModelRoots {
-			roots = append(roots, filepath.Join(resolved, filepath.FromSlash(rel)))
-		}
-	} else {
-		if home, err := os.UserHomeDir(); err == nil {
-			roots = append(roots, filepath.Join(home, ".cache", "torch", "hub", "checkpoints"))
-		}
-		if hub := weightHubRoot(); hub != "" {
-			roots = append(roots, hub)
-		}
+	manifestPath := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		manifestPath = modelmanifest.DefaultPath(home)
+	}
+	manifest, raw, manifestErr := modelmanifest.Load(manifestPath)
+	manifestRevision := modelmanifest.Revision(raw)
+	manifestError := ""
+	if manifestErr != nil {
+		manifestError = manifestErr.Error()
 	}
 	if installRoot == "" {
 		installRoot = resolved
 	}
-	manager, err := newManagerWithInstallRoot(resolved, data, roots, rootKind, installRoot)
+	manager, err := newManagerWithInstallRoot(resolved, data, manifest, manifestRevision, manifestError, manifestPath, rootKind, installRoot)
 	if err != nil {
 		return err
 	}
 	defer manager.Close()
-	manager.haarFiles = append([]string(nil), layout.HaarFiles...)
 	listener, err := net.Listen("tcp", listen)
 	if err != nil {
 		return err

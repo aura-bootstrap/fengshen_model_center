@@ -23,10 +23,11 @@ func httpManager(t *testing.T) *Manager {
 			t.Fatal(err)
 		}
 	}
-	m, err := NewManager(root, filepath.Join(t.TempDir(), "paths.json"), []string{filepath.Join(root, "models")})
+	m, err := NewManager(root, filepath.Join(t.TempDir(), "paths.json"), testManifest(t))
 	if err != nil {
 		t.Fatal(err)
 	}
+	allowFixtureRoots(m, filepath.Join(root, "models"))
 	t.Cleanup(func() { _ = m.Close() })
 	return m
 }
@@ -190,193 +191,6 @@ func httpPoll(t *testing.T, h http.Handler, id, status string) Operation {
 	}
 }
 
-func TestHTTPScanLifecycle(t *testing.T) {
-	m := httpManager(t)
-	h := newHandler(m, "secret", "127.0.0.1:18120", nil)
-	dir := t.TempDir()
-	for _, name := range []string{"a.gguf", "b.gguf", "c.gguf"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("abc"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	registration := httpBody(t, map[string]any{"path": dir, "expected_revision": 0})
-	for _, token := range []string{"", "wrong-secret"} {
-		r := httptest.NewRequest("PUT", "http://127.0.0.1:18120/api/registrations/whisper-asr", strings.NewReader(registration))
-		r.Header.Set("X-Model-Center-Token", token)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		var envelope struct {
-			Error apiError `json:"error"`
-		}
-		if w.Code != 403 {
-			t.Fatalf("unauthorized PUT: %d %s", w.Code, w.Body.String())
-		}
-		httpJSON(t, w, &envelope)
-		if envelope.Error.Code != "session_invalid" {
-			t.Fatalf("unauthorized PUT error=%+v", envelope)
-		}
-	}
-	if m.State().Registry.Revision != 0 || len(m.State().Registry.Registrations) != 0 {
-		t.Fatal("unauthorized PUT changed registry")
-	}
-	var registered struct {
-		Schema        int                        `json:"schema_version"`
-		Revision      uint64                     `json:"revision"`
-		Registrations map[string]json.RawMessage `json:"registrations"`
-	}
-	httpJSON(t, httpRequest(t, h, "PUT", "/api/registrations/whisper-asr", registration, 200), &registered)
-	if registered.Revision != 1 || registered.Schema != 1 || len(registered.Registrations) != 1 {
-		t.Fatalf("registration=%+v", registered)
-	}
-	httpError(t, h, "PUT", "/api/registrations/whisper-asr", httpBody(t, map[string]any{"path": t.TempDir(), "expected_revision": 0}), 409, "registry_conflict")
-	var state State
-	httpJSON(t, httpRequest(t, h, "GET", "/api/state", "", 200), &state)
-	if state.Registry.Revision != 1 || state.Registry.Registrations["whisper-asr"].InputPath != dir || state.CurrentInventory != "" || state.ActiveOperation != nil {
-		t.Fatalf("conflict mutated state or GET scanned: %+v", state)
-	}
-	httpError(t, h, "POST", "/api/operations/scan", `{"registry_revision":0}`, 409, "registry_conflict")
-	scan := httpStart(t, h, "scan", `{"registry_revision":1}`)
-	done := httpPoll(t, h, scan.ID, "completed")
-	httpOpaqueID(t, done.ResultID)
-	var inv Inventory
-	httpJSON(t, httpRequest(t, h, "GET", "/api/inventories/"+done.ResultID, "", 200), &inv)
-	if inv.ID != done.ResultID || !inv.Complete || inv.Stale || inv.RegistryRevision != 1 || len(inv.Models) != 12 {
-		t.Fatalf("inventory=%+v", inv)
-	}
-	base := "/api/inventories/" + inv.ID + "/models/whisper-asr/files"
-	var files []ModelFile
-	cursor := ""
-	seen := map[string]bool{}
-	for n := 0; ; n++ {
-		if n >= 3 {
-			t.Fatal("pagination did not terminate")
-		}
-		var page struct {
-			Files []ModelFile `json:"files"`
-			Next  string      `json:"next_cursor"`
-		}
-		httpJSON(t, httpRequest(t, h, "GET", base+"?limit=1&cursor="+cursor, "", 200), &page)
-		if len(page.Files) != 1 {
-			t.Fatalf("page=%+v", page)
-		}
-		f := page.Files[0]
-		httpOpaqueID(t, f.ID)
-		if seen[f.ID] || f.Bytes != "3" || filepath.Dir(f.Path) != dir || f.Hash != nil {
-			t.Fatalf("file=%+v", f)
-		}
-		seen[f.ID] = true
-		files = append(files, f)
-		if page.Next == "" {
-			break
-		}
-		httpOpaqueID(t, page.Next)
-		if page.Next == cursor {
-			t.Fatal("cursor did not advance")
-		}
-		cursor = page.Next
-	}
-	if len(files) != 3 {
-		t.Fatalf("files=%+v", files)
-	}
-	paths := map[string]bool{}
-	for _, f := range files {
-		paths[filepath.Base(f.Path)] = true
-	}
-	if len(paths) != 3 || !paths["a.gguf"] || !paths["b.gguf"] || !paths["c.gguf"] {
-		t.Fatalf("pagination lost files: %v", paths)
-	}
-	// Expire a real cursor under the package lock, without waiting 30 minutes.
-	m.mu.Lock()
-	p := m.cursors[cursor]
-	p.createdAt = time.Now().Add(-cursorLifetime - time.Second)
-	m.cursors[cursor] = p
-	m.collect()
-	m.mu.Unlock()
-	httpError(t, h, "GET", base+"?limit=1&cursor="+cursor, "", 410, "cursor_invalid")
-	verifyBody := httpBody(t, map[string]any{"inventory_id": inv.ID, "model_id": "whisper-asr", "file_ids": []string{files[0].ID}})
-	for _, tc := range []struct {
-		query, code string
-		status      int
-	}{
-		{"?limit=no", "page_invalid", 422}, {"?limit=-1", "request_invalid", 422}, {"?limit=1001", "request_invalid", 422}, {"?cursor=missing", "cursor_invalid", 410},
-	} {
-		httpError(t, h, "GET", base+tc.query, "", tc.status, tc.code)
-	}
-	httpError(t, h, "GET", "/api/inventories/"+inv.ID+"/models/unknown/files", "", 404, "model_unknown")
-	for _, ids := range [][]string{nil, {files[0].ID, files[0].ID}, {files[0].Path}} {
-		code := "file_not_allowed"
-		if len(ids) == 0 {
-			code = "request_invalid"
-		}
-		httpError(t, h, "POST", "/api/operations/verify", httpBody(t, map[string]any{"inventory_id": inv.ID, "model_id": "whisper-asr", "file_ids": ids}), 422, code)
-	}
-	verify := httpStart(t, h, "verify", verifyBody)
-	verified := httpPoll(t, h, verify.ID, "completed")
-	if verified.CheckedEntries != 1 || verified.ProcessedBytes != "3" || len(verified.Hashes) != 1 {
-		t.Fatalf("verify=%+v", verified)
-	}
-	hash := verified.Hashes[0]
-	if hash.FileID != files[0].ID || hash.Status != "fingerprint_computed" || hash.Bytes != "3" || hash.SHA256 != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" || hash.CheckedAt.IsZero() {
-		t.Fatalf("hash=%+v", hash)
-	}
-	var all struct {
-		Files []ModelFile `json:"files"`
-		Next  string      `json:"next_cursor"`
-	}
-	httpJSON(t, httpRequest(t, h, "GET", base, "", 200), &all)
-	found := false
-	for _, f := range all.Files {
-		if f.ID == hash.FileID {
-			found = f.Hash != nil && f.Hash.SHA256 == hash.SHA256 && f.Hash.Status == hash.Status
-		}
-	}
-	if !found {
-		t.Fatal("verified hash not published in files response")
-	}
-	for n := 0; n < 2; n++ {
-		var cancelled Operation
-		httpJSON(t, httpRequest(t, h, "POST", "/api/operations/"+verify.ID+"/cancel", `{}`, 200), &cancelled)
-		if httpBody(t, cancelled) != httpBody(t, verified) {
-			t.Fatalf("cancel changed completed operation: %+v", cancelled)
-		}
-	}
-	httpError(t, h, "DELETE", "/api/registrations/whisper-asr", `{"expected_revision":0}`, 409, "registry_conflict")
-	registered.Registrations = nil // encoding/json reuses non-nil maps; decode this snapshot afresh.
-	httpJSON(t, httpRequest(t, h, "DELETE", "/api/registrations/whisper-asr", `{"expected_revision":1}`, 200), &registered)
-	if registered.Revision != 2 || len(registered.Registrations) != 0 {
-		t.Fatalf("delete=%+v", registered)
-	}
-	for _, f := range files {
-		b, err := os.ReadFile(f.Path)
-		if err != nil || string(b) != "abc" {
-			t.Fatalf("unregister changed source: %q %v", b, err)
-		}
-	}
-	httpJSON(t, httpRequest(t, h, "GET", "/api/inventories/"+inv.ID, "", 200), &inv)
-	if !inv.Stale {
-		t.Fatal("unregister did not stale inventory")
-	}
-	httpError(t, h, "POST", "/api/operations/verify", verifyBody, 409, "inventory_stale")
-	httpJSON(t, httpRequest(t, h, "GET", base, "", 200), &all)
-	for _, f := range all.Files {
-		if f.Hash != nil && f.Hash.Status != "stale" {
-			t.Fatalf("old hash still valid: %+v", f.Hash)
-		}
-	}
-	// A real replacement scan releases protection of the old result. Age only the
-	// completed operation, then use collect rather than fabricating a tombstone.
-	next := httpStart(t, h, "scan", `{"registry_revision":2}`)
-	httpPoll(t, h, next.ID, "completed")
-	m.mu.Lock()
-	old := time.Now().Add(-31 * time.Minute)
-	m.operations[scan.ID].FinishedAt = &old
-	m.collect()
-	m.mu.Unlock()
-	httpError(t, h, "GET", "/api/inventories/"+inv.ID, "", 410, "inventory_gone")
-	httpError(t, h, "GET", base, "", 410, "inventory_gone")
-	httpError(t, h, "POST", "/api/operations/verify", verifyBody, 410, "inventory_gone")
-	httpError(t, h, "GET", "/api/operations/"+scan.ID, "", 410, "operation_gone")
-}
 func TestHTTPStrictBodies(t *testing.T) {
 	m := httpManager(t)
 	h := newHandler(m, "secret", "127.0.0.1:18120", nil)
@@ -385,8 +199,6 @@ func TestHTTPStrictBodies(t *testing.T) {
 		{"POST", "/api/operations/verify", `{"inventory_id":"missing","model_id":"whisper-asr","file_ids":[]}`, `{"extra":1}`, `{"file_ids":"x"}`},
 		{"POST", "/api/operations/verify-component", `{"component_id":"missing","version":"1"}`, `{"extra":1}`, `{"component_id":7}`},
 		{"POST", "/api/operations/missing/cancel", `{}`, `{"extra":1}`, `{"extra":[]}`},
-		{"PUT", "/api/registrations/whisper-asr", `{"path":"x","expected_revision":0}`, `{"extra":1}`, `{"path":7,"expected_revision":0}`},
-		{"DELETE", "/api/registrations/whisper-asr", `{"expected_revision":0}`, `{"extra":1}`, `{"expected_revision":false}`},
 	} {
 		t.Run(endpoint.method+endpoint.path, func(t *testing.T) {
 			for n, body := range []string{"", "null", "[]", "true", `"text"`, "{", "{}{}", "{} trailing", `{"x":1,"x":2}`, endpoint.unknown, endpoint.wrongType} {
@@ -402,11 +214,6 @@ func TestHTTPStrictBodies(t *testing.T) {
 	for _, tc := range []struct{ method, path, body, code string }{
 		{"POST", "/api/operations/scan", `{}`, "request_invalid"},
 		{"POST", "/api/operations/scan", `{"registry_revision":null}`, "request_invalid"},
-		{"PUT", "/api/registrations/whisper-asr", `{"expected_revision":0,"path":" "}`, "request_invalid"},
-		{"PUT", "/api/registrations/whisper-asr", `{"path":"x"}`, "request_invalid"},
-		{"PUT", "/api/registrations/unknown", `{"expected_revision":0,"path":"x"}`, "model_unknown"},
-		{"DELETE", "/api/registrations/whisper-asr", `{}`, "request_invalid"},
-		{"DELETE", "/api/registrations/whisper-asr", `{"expected_revision":null}`, "request_invalid"},
 	} {
 		httpError(t, h, tc.method, tc.path, tc.body, 422, tc.code)
 	}
@@ -527,7 +334,6 @@ func TestHTTPRoutesAndStaticWhitelist(t *testing.T) {
 	}{
 		{"POST", "/", "GET, HEAD", true}, {"DELETE", "/app.js", "GET, HEAD", true},
 		{"PUT", "/api/state", "GET, HEAD", false}, {"PUT", "/api/operations/scan", "GET, HEAD, POST", false},
-		{"GET", "/api/registrations/whisper-asr", "DELETE, PUT", false},
 		{"PUT", "/api/inventories/missing", "GET, HEAD", false},
 		{"GET", "/api/operations/missing/cancel", "POST", false},
 		{"HEAD", "/api/state", "GET", true},
@@ -563,40 +369,6 @@ func TestHTTPRoutesAndStaticWhitelist(t *testing.T) {
 		t.Fatal(err)
 	}
 	httpError(t, h, "GET", "/api/state", "", 503, "service_closed")
-}
-
-func TestHTTPCorruptRegistryReadOnly(t *testing.T) {
-	// Corrupt storage before opening a separate manager: do not replace its store
-	// or manufacture a mock error on the healthy lifecycle fixture.
-	root := t.TempDir()
-	for _, p := range []string{"sidecar", "models"} {
-		if err := os.MkdirAll(filepath.Join(root, p), 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	store := t.TempDir()
-	path := filepath.Join(store, "registrations.json")
-	const corrupt = "{broken registry"
-	if err := os.WriteFile(path, []byte(corrupt), 0600); err != nil {
-		t.Fatal(err)
-	}
-	m, err := NewManager(root, store, []string{filepath.Join(root, "models")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = m.Close() })
-	h := newHandler(m, "secret", "127.0.0.1:18120", nil)
-	var state State
-	httpJSON(t, httpRequest(t, h, "GET", "/api/state", "", 200), &state)
-	if !strings.Contains(state.StorageError, "registry_corrupt") {
-		t.Fatalf("missing storage diagnosis: %+v", state)
-	}
-	httpError(t, h, "PUT", "/api/registrations/whisper-asr", httpBody(t, map[string]any{"expected_revision": 0, "path": filepath.Join(root, "models")}), 503, "registry_read_only")
-	httpError(t, h, "DELETE", "/api/registrations/whisper-asr", `{"expected_revision":0}`, 503, "registry_read_only")
-	b, err := os.ReadFile(path)
-	if err != nil || string(b) != corrupt {
-		t.Fatalf("read-only request changed storage: %q %v", b, err)
-	}
 }
 
 func TestResolveRootStrict(t *testing.T) {

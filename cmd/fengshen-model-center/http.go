@@ -98,35 +98,6 @@ func newHandler(manager *Manager, token, host string, trusted *integration.Host)
 		v, err := manager.Cancel(r.PathValue("id"))
 		respond(w, 200, v, err)
 	})
-	mux.HandleFunc("PUT /api/registrations/{id}", func(w http.ResponseWriter, r *http.Request) {
-		var in struct {
-			Path     string  `json:"path"`
-			Revision *uint64 `json:"expected_revision"`
-		}
-		if !decodeBody(w, r, &in) {
-			return
-		}
-		if in.Revision == nil || strings.TrimSpace(in.Path) == "" {
-			writeAPIError(w, failure("request_invalid", "请填写路径和登记版本", 422))
-			return
-		}
-		v, err := manager.Registration(r.Context(), r.PathValue("id"), in.Path, *in.Revision, false)
-		respond(w, 200, v, err)
-	})
-	mux.HandleFunc("DELETE /api/registrations/{id}", func(w http.ResponseWriter, r *http.Request) {
-		var in struct {
-			Revision *uint64 `json:"expected_revision"`
-		}
-		if !decodeBody(w, r, &in) {
-			return
-		}
-		if in.Revision == nil {
-			writeAPIError(w, failure("request_invalid", "缺少登记版本", 422))
-			return
-		}
-		v, err := manager.Registration(r.Context(), r.PathValue("id"), "", *in.Revision, true)
-		respond(w, 200, v, err)
-	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")

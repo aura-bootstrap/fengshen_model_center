@@ -18,15 +18,16 @@ import (
 func fixtureManager(t *testing.T) *Manager {
 	t.Helper()
 	root := t.TempDir()
-	for _, p := range []string{"sidecar", "models"} {
+	for _, p := range []string{"sidecar", "models", filepath.Join("assets", "haar")} {
 		if err := os.MkdirAll(filepath.Join(root, p), 0700); err != nil {
 			t.Fatal(err)
 		}
 	}
-	m, err := NewManager(root, t.TempDir(), []string{filepath.Join(root, "models")})
+	m, err := NewManager(root, t.TempDir(), testManifest(t))
 	if err != nil {
 		t.Fatal(err)
 	}
+	allowFixtureRoots(m, filepath.Join(root, "models"), filepath.Join(root, "assets", "haar"))
 	t.Cleanup(func() { m.Close() })
 	return m
 }
@@ -89,36 +90,6 @@ func TestCoreScanCopiesAndGroups(t *testing.T) {
 	}
 	if *inv.AssetSize.Bytes != "6" {
 		t.Fatal(*inv.AssetSize.Bytes)
-	}
-}
-func TestCoreRegistrationCandidateAndHash(t *testing.T) {
-	m := fixtureManager(t)
-	p := filepath.Join(t.TempDir(), "unknown.gguf")
-	put(t, p, "abc")
-	if _, e := m.Registration(context.Background(), "whisper-asr", p, 0, false); e != nil {
-		t.Fatal(e)
-	}
-	inv := scanFixture(t, m)
-	files, _, e := m.Files(inv.ID, "whisper-asr", "", 200)
-	if e != nil || len(files) != 1 {
-		t.Fatalf("files %v %v", files, e)
-	}
-	if files[0].Evidence == "recognized_by_rule" {
-		t.Fatal("扩展名不确认型号")
-	}
-	o, e := m.StartVerify(context.Background(), inv.ID, "whisper-asr", []string{files[0].ID})
-	if e != nil {
-		t.Fatal(e)
-	}
-	done := await(t, m, o.ID)
-	if len(done.Hashes) != 1 || done.Hashes[0].SHA256 != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
-		t.Fatalf("hash %+v", done)
-	}
-	put(t, p, "abcd")
-	scanFixture(t, m)
-	old, _ := m.Operation(o.ID)
-	if old.Hashes[0].Status != "stale" {
-		t.Fatal("旧摘要未失效")
 	}
 }
 func TestCoreRetentionAndImmutableQueries(t *testing.T) {
@@ -303,17 +274,5 @@ func TestCoreComponentCancellationPublishesNoSuccess(t *testing.T) {
 		if e.ID == "whisper-batch" && e.Integrity == "matched" {
 			t.Fatal("取消后缓存显示校验通过")
 		}
-	}
-}
-
-func TestCoreClosedAndInvalidRoot(t *testing.T) {
-	if m, e := NewManager(t.TempDir(), t.TempDir(), nil); e == nil {
-		m.Close()
-		t.Fatal("任意目录不应作为项目根")
-	}
-	m := fixtureManager(t)
-	m.Close()
-	if _, e := m.StartScan(context.Background(), 0); e == nil {
-		t.Fatal("关闭后仍启动")
 	}
 }

@@ -7,9 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
@@ -18,15 +16,6 @@ import (
 
 const centerPath = "model-center/fengshen-model-center.exe"
 const componentPath = "model-center/components"
-
-type resourceLayout struct {
-	Schema     int      `json:"schema"`
-	Center     string   `json:"center"`
-	Components string   `json:"components"`
-	RootKind   string   `json:"root_kind"`
-	ModelRoots []string `json:"model_roots"`
-	HaarFiles  []string `json:"haar_files"`
-}
 
 // Parse only the bounded bytes whose digest is actually bound in delivery.
 func deliveryBytes(s *safefs.Scope, item components.File) ([]byte, error) {
@@ -58,53 +47,11 @@ func validateDelivery(ctx context.Context, s *safefs.Scope, d Delivery) error {
 	if !ok || exe.Bytes == "0" {
 		return fmt.Errorf("delivery requires center executable")
 	}
-	layoutFile, ok := files["resource-layout.json"]
-	if !ok {
-		return fmt.Errorf("delivery requires resource-layout.json")
-	}
-	b, err := deliveryBytes(s, layoutFile)
-	if err != nil {
-		return err
-	}
-	var layout resourceLayout
-	if err = components.StrictJSON(b, &layout); err != nil {
-		return err
-	}
-	if layout.Schema != 1 || layout.Center != centerPath || layout.Components != componentPath || layout.RootKind != "installed" || layout.ModelRoots == nil || layout.HaarFiles == nil || len(layout.ModelRoots) > 64 || len(layout.HaarFiles) > 2 {
-		return fmt.Errorf("invalid resource layout")
-	}
-	seen := map[string]bool{}
-	for i, paths := range [][]string{layout.ModelRoots, layout.HaarFiles} {
-		for _, rel := range paths {
-			key := strings.ToLower(rel)
-			if !components.SafeRelative(rel) || seen[key] {
-				return fmt.Errorf("invalid/duplicate layout resource: %s", rel)
-			}
-			seen[key] = true
-			resource, e := safefs.Open(s.Path() + "/" + rel)
-			if e != nil {
-				return fmt.Errorf("invalid layout resource: %s: %w", rel, e)
-			}
-			resolved := resource.Path()
-			resource.Close()
-			expected := filepath.Join(s.Path(), filepath.FromSlash(rel))
-			st, e := os.Stat(expected)
-			if e != nil || !strings.EqualFold(filepath.Clean(resolved), filepath.Clean(expected)) || st.IsDir() != (i == 0) {
-				return fmt.Errorf("invalid layout resource type/link: %s", rel)
-			}
-			if i == 1 {
-				if _, e := hash(ctx, s, rel); e != nil {
-					return e
-				}
-			}
-			if i == 1 && path.Base(rel) != "haarcascade_frontalface_default.xml" && path.Base(rel) != "haarcascade_profileface.xml" {
-				return fmt.Errorf("invalid Haar resource")
-			}
-		}
-	}
 	manifests := map[string]components.Manifest{}
 	reports := map[string]bool{}
 	centerFound := false
+	var b []byte
+	var err error
 	for _, item := range d.Files {
 		if path.Base(item.Path) != "manifest.json" {
 			continue

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/registry"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/safefs"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,6 +17,7 @@ type scanRange struct {
 	path, kind   string
 	models       []string
 	registration *registry.Registration
+	files        map[string]bool
 }
 type measuredFile struct {
 	entry   safefs.Entry
@@ -27,9 +27,9 @@ type measuredFile struct {
 func (m *Manager) StartScan(ctx context.Context, revision uint64) (Operation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	snapshot := m.registry.Snapshot()
+	snapshot := m.registrySnap
 	if snapshot.Revision != revision {
-		return Operation{}, failure("registry_conflict", "登记版本已变化，请刷新", 409)
+		return Operation{}, failure("manifest_conflict", "模型清单版本已变化，请刷新", 409)
 	}
 	o, job, e := m.begin(ctx, "scan", m.scanTimeout)
 	if e != nil {
@@ -46,69 +46,17 @@ func (m *Manager) StartScan(ctx context.Context, revision uint64) (Operation, er
 	return cloneJSON(*o), nil
 }
 func (m *Manager) ranges(s registry.Snapshot) []scanRange {
-	var defaults []string
-	if m.installed || len(m.roots) > 0 {
-		defaults = append(defaults, m.roots...)
-	} else {
-		defaults = []string{filepath.Join(m.root, "sidecar", "seed-vc", "checkpoints"), filepath.Join(m.root, "models")}
-		if m.torchRoot != "" {
-			defaults = append(defaults, m.torchRoot)
-		}
-	}
-	var ids []string
-	for _, model := range catalog() {
-		if _, registered := s.Registrations[model.ID]; !registered && model.Embedded == "" {
-			ids = append(ids, model.ID)
-		}
-	}
 	var out []scanRange
-	for _, p := range defaults {
-		out = append(out, scanRange{path: p, kind: "asset", models: append([]string(nil), ids...)})
+	for id, reg := range s.Registrations {
+		reg := reg
+		out = append(out, scanRange{path: reg.InputPath, kind: "manifest", models: []string{id}, registration: &reg, files: m.manifestFiles[id]})
 	}
-	for _, model := range catalog() {
-		if r, ok := s.Registrations[model.ID]; ok {
-			r := r
-			out = append(out, scanRange{path: r.InputPath, kind: "registration", models: []string{model.ID}, registration: &r})
-		} else if model.Embedded != "" && !m.installed {
-			out = append(out, scanRange{path: filepath.Join(m.root, model.Embedded), kind: "asset", models: []string{model.ID}})
-		}
-	}
-	if m.installed {
-		for _, rel := range m.haarFiles {
-			for _, model := range catalog() {
-				if model.Embedded != "" && filepath.Base(model.Embedded) == filepath.Base(rel) {
-					if _, registered := s.Registrations[model.ID]; !registered {
-						out = append(out, scanRange{path: filepath.Join(m.root, filepath.FromSlash(rel)), kind: "asset", models: []string{model.ID}})
-					}
-				}
-			}
-		}
-	} else {
-		out = append(out, scanRange{path: filepath.Join(m.root, "sidecar", "venv"), kind: "runtime"})
-	}
-	// Visit parents before children so overlapping authorised roots can reuse metadata.
+	out = append(out, m.extraRanges...)
 	sort.SliceStable(out, func(i, j int) bool { return len(filepath.Clean(out[i].path)) < len(filepath.Clean(out[j].path)) })
 	return out
 }
+
 func (m *Manager) openScanRange(r scanRange) (*safefs.Scope, error) {
-	if r.registration != nil {
-		return safefs.Open(r.path)
-	}
-	if rel, err := filepath.Rel(m.root, r.path); err == nil && filepath.IsLocal(rel) {
-		return m.projectScope.Derive(rel)
-	}
-	if m.torchRoot != "" && sameScanPath(m.torchRoot, r.path) {
-		if m.homeError != nil {
-			// A missing trusted anchor cannot establish a missing *cache* boundary.
-			return nil, fmt.Errorf("%v: %w", m.homeError, safefs.ErrBoundary)
-		}
-		return m.homeScope.Derive(filepath.Join(".cache", "torch", "hub", "checkpoints"))
-	}
-	if m.installed {
-		return nil, safefs.ErrBoundary
-	}
-	// Tests/embedders explicitly authorize custom external roots. Do not replace
-	// them with their parent or home, or add the production defaults alongside them.
 	return safefs.Open(r.path)
 }
 
@@ -330,6 +278,9 @@ func (m *Manager) scan(ctx context.Context, operation string, snapshot registry.
 			if a.IsDir || a.Error != "" {
 				continue
 			}
+			if r.files != nil && !r.files[filepath.Base(sourcePath(a))] {
+				continue
+			}
 			k := fileKey(a)
 			if r.kind == "runtime" {
 				runtimeFiles[k] = a
@@ -339,13 +290,11 @@ func (m *Manager) scan(ctx context.Context, operation string, snapshot registry.
 			for _, id := range r.models {
 				state := &inv.Models[index[id]]
 				source := sourcePath(a)
-				recognized := recognizes(state.Model, source)
-				if !recognized && (r.registration == nil || !allowed(state.Model, source)) {
+				if !recognizes(state.Model, source) {
 					continue
 				}
-				evidence := "registered_identity_unconfirmed"
-				if recognized {
-					evidence = "recognized_by_rule"
+				evidence := "recognized_by_rule"
+				{
 					group := filepath.Dir(source)
 					if modelGroups[id][group] == nil {
 						modelGroups[id][group] = map[string]bool{}
@@ -370,21 +319,6 @@ func (m *Manager) scan(ctx context.Context, operation string, snapshot registry.
 					if a.Path != old.Path && !contains(old.Aliases, a.Path) {
 						old.Aliases = append(old.Aliases, a.Path)
 					}
-					if recognized && old.Evidence != "recognized_by_rule" {
-						// Prefer a recognized source over an earlier unconfirmed alias,
-						// keeping the matching scope/relative pair for restricted reads.
-						previous := old.Path
-						old.Path, old.Group = source, filepath.Dir(source)
-						old.ScopeID, old.relative, old.LinkKind = sr.ID, a.Relative, a.LinkKind
-						aliases := []string{}
-						for _, path := range append(old.Aliases, previous) {
-							if path != source && !contains(aliases, path) {
-								aliases = append(aliases, path)
-							}
-						}
-						old.Aliases = aliases
-						old.Evidence = evidence
-					}
 					continue
 				}
 				aliases := []string{}
@@ -406,15 +340,10 @@ func (m *Manager) scan(ctx context.Context, operation string, snapshot registry.
 		identified := map[string]safefs.Entry{}
 		groups := modelGroups[s.ID]
 		empty := false
-		candidate := false
 		for _, f := range s.files {
 			sort.Strings(f.Aliases)
 			if f.size == 0 {
 				empty = true
-			}
-			if f.Evidence != "recognized_by_rule" {
-				candidate = true
-				continue
 			}
 			a := safefs.Entry{Path: f.Path, Identity: f.Identity, Size: f.size, Modified: f.Modified}
 			k := fileKey(a)
@@ -426,9 +355,6 @@ func (m *Manager) scan(ctx context.Context, operation string, snapshot registry.
 		}
 		known := knownModel[s.ID]
 		if (s.ID == "local-text" || s.ID == "local-vision") && len(identified) == 0 {
-			known = false
-		}
-		if candidate && len(identified) == 0 {
 			known = false
 		}
 		s.Size = sumEntries(identified, completeModel[s.ID], known)

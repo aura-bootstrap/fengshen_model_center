@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/bindings"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/modelmanifest"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/registry"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimehttp"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/safefs"
@@ -30,18 +31,19 @@ type pageCursor struct {
 }
 type Manager struct {
 	root, componentRoot                        string
-	projectScope, homeScope                    *safefs.Scope
-	home, torchRoot                            string
-	homeError                                  error
-	installed                                  bool
-	haarFiles                                  []string
+	projectScope                               *safefs.Scope
+	manifest                                   modelmanifest.Manifest
+	manifestPath                               string
+	manifestRevision                           uint64
+	manifestError                              string
+	manifestFiles                              map[string]map[string]bool
+	extraRanges                                []scanRange
+	registrySnap                               registry.Snapshot
 	componentSnapshot                          []components.Evidence
-	roots                                      []string
 	mu                                         sync.Mutex
 	componentMu                                sync.Mutex
 	bindingStore                               *bindings.Store
 	runtimeHandler                             *runtimehttp.Handler
-	registry                                   *registry.Store
 	components                                 *components.Manager
 	ctx                                        context.Context
 	stop                                       context.CancelFunc
@@ -61,30 +63,27 @@ type Manager struct {
 	afterRead                                  func(context.Context)
 }
 
-func NewManager(root, store string, roots []string) (*Manager, error) {
-	return newManagerAt(root, store, roots, "development")
+func NewManager(root, store string, manifest modelmanifest.Manifest) (*Manager, error) {
+	return newManagerAt(root, store, manifest, "development")
 }
-func newManagerAt(root, store string, roots []string, kind string) (*Manager, error) {
-	return newManagerWithInstallRoot(root, store, roots, kind, "")
+func newManagerAt(root, store string, manifest modelmanifest.Manifest, kind string) (*Manager, error) {
+	raw, _ := json.Marshal(manifest)
+	return newManagerWithInstallRoot(root, store, manifest, modelmanifest.Revision(raw), "", "", kind, "")
 }
-func newManagerWithInstallRoot(root, store string, roots []string, kind, installRoot string) (*Manager, error) {
+func newManagerWithInstallRoot(root, store string, manifest modelmanifest.Manifest, revision uint64, manifestErr, manifestPath, kind, installRoot string) (*Manager, error) {
 	if root == "" {
 		var e error
 		root, e = os.Getwd()
 		if e != nil {
 			return nil, e
 		}
-		for !validProject(root) {
-			p := filepath.Dir(root)
-			if p == root {
-				return nil, failure("root_invalid", "无法定位项目根目录", 422)
-			}
-			root = p
-		}
 	}
 	root, e := filepath.Abs(root)
-	if e != nil || kind == "development" && !validProject(root) {
-		return nil, failure("root_invalid", "项目根目录缺少 sidecar 或 models", 422)
+	if e != nil {
+		return nil, failure("root_invalid", "项目根目录无效", 422)
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return nil, failure("root_invalid", "项目根目录不存在", 422)
 	}
 	projectScope, e := safefs.Open(root)
 	if e != nil {
@@ -105,25 +104,8 @@ func newManagerWithInstallRoot(root, store string, roots []string, kind, install
 	}
 	componentRoot := filepath.Join(installRoot, "model-center", "components")
 	ctx, stop := context.WithCancel(context.Background())
-	m := &Manager{root: root, componentRoot: componentRoot, projectScope: projectScope, roots: append([]string(nil), roots...), ctx: ctx, stop: stop, inventories: map[string]*Inventory{}, gone: map[string]bool{}, operations: map[string]*Operation{}, cursors: map[string]pageCursor{}, scanEntries: 100000, scanDepth: 64, scanTimeout: 10 * time.Minute, verifyTimeout: 30 * time.Minute, components: components.New(componentRoot)}
-	m.installed = kind == "installed"
-	if !m.installed {
-		m.home, m.homeError = os.UserHomeDir()
-		if m.homeError == nil {
-			m.torchRoot = filepath.Join(m.home, ".cache", "torch", "hub", "checkpoints")
-			// Anchor home, not a possibly redirected .cache or checkpoint entry.
-			m.homeScope, m.homeError = safefs.Open(m.home)
-		}
-	}
-	m.registry, e = registry.Open(store, validateRegistration)
-	if e != nil {
-		stop()
-		projectScope.Close()
-		if m.homeScope != nil {
-			m.homeScope.Close()
-		}
-		return nil, e
-	}
+	m := &Manager{root: root, componentRoot: componentRoot, projectScope: projectScope, manifest: manifest, manifestPath: manifestPath, manifestRevision: revision, manifestError: manifestErr, ctx: ctx, stop: stop, inventories: map[string]*Inventory{}, gone: map[string]bool{}, operations: map[string]*Operation{}, cursors: map[string]pageCursor{}, scanEntries: 100000, scanDepth: 64, scanTimeout: 10 * time.Minute, verifyTimeout: 30 * time.Minute, components: components.New(componentRoot)}
+	m.registrySnap, m.manifestFiles = syntheticSnapshot(manifest, revision, manifestErr)
 	m.bindingStore, e = bindings.Open(filepath.Join(store, "execution-bindings"))
 	if e != nil {
 		m.Close()
@@ -132,6 +114,37 @@ func newManagerWithInstallRoot(root, store string, roots []string, kind, install
 	m.componentSnapshot = cloneJSON(m.components.List())
 	return m, nil
 }
+
+func syntheticSnapshot(manifest modelmanifest.Manifest, revision uint64, manifestErr string) (registry.Snapshot, map[string]map[string]bool) {
+	snap := registry.Snapshot{SchemaVersion: 1, Revision: revision, Error: manifestErr, Registrations: map[string]registry.Registration{}}
+	dirs := map[string]string{}
+	files := map[string]map[string]bool{}
+	for _, e := range manifest.Entries {
+		if _, ok := findModel(e.ModelID); !ok {
+			continue
+		}
+		p := e.FilePath()
+		dir := filepath.Dir(p)
+		if current, ok := dirs[e.ModelID]; !ok {
+			dirs[e.ModelID] = dir
+		} else if !sameScanPath(current, dir) {
+			continue
+		}
+		if files[e.ModelID] == nil {
+			files[e.ModelID] = map[string]bool{}
+		}
+		files[e.ModelID][filepath.Base(p)] = true
+	}
+	for id, dir := range dirs {
+		reg, err := validateRegistration(id, dir)
+		if err != nil {
+			continue
+		}
+		snap.Registrations[id] = reg
+	}
+	return snap, files
+}
+
 func validProject(root string) bool {
 	for _, p := range []string{"sidecar", "models"} {
 		s, e := os.Stat(filepath.Join(root, filepath.FromSlash(p)))
@@ -192,15 +205,11 @@ func (m *Manager) Close() error {
 	for _, i := range m.inventories {
 		closeInventory(i)
 	}
-	var homeErr error
-	if m.homeScope != nil {
-		homeErr = m.homeScope.Close()
-	}
 	var bindingErr error
 	if m.bindingStore != nil {
 		bindingErr = m.bindingStore.Close()
 	}
-	return errors.Join(m.projectScope.Close(), homeErr, m.registry.Close(), bindingErr, runtimeErr)
+	return errors.Join(m.projectScope.Close(), bindingErr, runtimeErr)
 }
 func closeInventory(i *Inventory) {
 	for _, s := range i.access {
@@ -222,7 +231,7 @@ func (m *Manager) State() State {
 // stateLocked requires mu, keeping dashboard inventory references consistent.
 func (m *Manager) stateLocked() State {
 	m.collect()
-	snapshot := m.registry.Snapshot()
+	snapshot := m.registrySnap
 	s := State{StorageError: snapshot.Error, Catalog: catalog(), Registry: snapshot, CurrentInventory: m.current, LastCompleteInventory: m.lastComplete, ProjectRoot: m.root, Capabilities: capabilities()}
 	if o := m.operations[m.active]; o != nil {
 		v := cloneJSON(*o)
@@ -233,51 +242,6 @@ func (m *Manager) stateLocked() State {
 		s.LastAttempt = &v
 	}
 	return s
-}
-func (m *Manager) Registration(ctx context.Context, id, path string, revision uint64, remove bool) (registry.Snapshot, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
-		return registry.Snapshot{}, os.ErrClosed
-	}
-	if _, ok := findModel(id); !ok {
-		return registry.Snapshot{}, failure("model_unknown", "未知模型", 422)
-	}
-	var s registry.Snapshot
-	var e error
-	if remove {
-		s, e = m.registry.Delete(ctx, revision, id)
-	} else {
-		s, e = m.registry.Update(ctx, revision, id, path)
-	}
-	if e != nil {
-		return s, e
-	}
-	if m.cancel != nil {
-		m.cancel()
-		if o := m.operations[m.active]; o != nil {
-			o.Status = "cancelling"
-		}
-	}
-	for _, i := range m.inventories {
-		i.Stale = true
-		for _, s := range i.Models {
-			for _, f := range s.files {
-				if f.Hash != nil && f.Hash.Status == "fingerprint_computed" {
-					f.Hash.Status = "stale"
-				}
-			}
-		}
-		refreshContentEqual(i)
-	}
-	for _, o := range m.operations {
-		for j := range o.Hashes {
-			if o.Hashes[j].Status == "fingerprint_computed" {
-				o.Hashes[j].Status = "stale"
-			}
-		}
-	}
-	return s, nil
 }
 func (m *Manager) inventoryMissing(id string) error {
 	if m.gone[id] {
@@ -400,7 +364,7 @@ func (m *Manager) finish(id string, ctx context.Context, inv *Inventory, hashes 
 		o.Status = "cancelled"
 	}
 	if inv != nil {
-		if inv.RegistryRevision != m.registry.Snapshot().Revision {
+		if inv.RegistryRevision != m.manifestRevision {
 			inv.Stale = true
 			o.Status = "cancelled"
 		}

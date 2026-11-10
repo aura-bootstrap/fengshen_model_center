@@ -17,13 +17,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/bindings"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimehttp"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimejobs"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeprocess"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
 )
 
 // Test fixtures record admission claims only; they are not delivery or inference evidence.
@@ -148,10 +148,11 @@ func newRuntimeBindingFixture(t *testing.T) runtimeBindingFixture {
 			t.Fatal(err)
 		}
 	}
-	m, err := newManagerWithInstallRoot(project, t.TempDir(), []string{filepath.Join(project, "models")}, "development", install)
+	m, err := newManagerWithInstallRoot(project, t.TempDir(), testManifest(t), 0, "", "", "development", install)
 	if err != nil {
 		t.Fatal(err)
 	}
+	allowFixtureRoots(m, filepath.Join(project, "models"), filepath.Join(project, "assets", "haar"))
 	t.Cleanup(func() { m.Close() })
 	fixture := runtimeBindingFixture{manager: m, install: install, dir: components.ComponentDirectory(m.componentRoot, "whisper-batch", "1"), model: filepath.Join(project, "models", "group", "ggml-small.bin")}
 	put(t, fixture.model, "model fixture; never loaded")
@@ -443,7 +444,7 @@ func TestRuntimeResolveBindingPinsAndRelease(t *testing.T) {
 		runtimeAssertFilePinned(t, path)
 	}
 	directories := []string{
-		filepath.Dir(fixture.model), filepath.Join(m.root, "models"), m.root,
+		filepath.Dir(fixture.model), m.root,
 		filepath.Dir(fixture.files[0]), filepath.Dir(fixture.files[1]), fixture.dir,
 		filepath.Dir(fixture.dir), m.componentRoot, filepath.Join(fixture.install, "model-center"), fixture.install,
 	}
@@ -553,7 +554,7 @@ func TestRuntimeResolveFailureReleasesAcquiredPins(t *testing.T) {
 	for _, path := range append([]string{fixture.model}, fixture.files...) {
 		runtimeAssertFileReleased(t, path)
 	}
-	for _, path := range []string{filepath.Dir(fixture.model), filepath.Join(fixture.manager.root, "models"), fixture.dir, fixture.manager.componentRoot, fixture.install} {
+	for _, path := range []string{filepath.Dir(fixture.model), fixture.dir, fixture.manager.componentRoot, fixture.install} {
 		runtimeAssertDirectoryReleased(t, path)
 	}
 	fixture.manager.Close()
@@ -626,10 +627,11 @@ func TestRuntimeComponentsUseInstallRoot(t *testing.T) {
 		}
 	}
 	install := t.TempDir()
-	m, err := newManagerWithInstallRoot(project, t.TempDir(), nil, "development", install)
+	m, err := newManagerWithInstallRoot(project, t.TempDir(), testManifest(t), 0, "", "", "development", install)
 	if err != nil {
 		t.Fatal(err)
 	}
+	allowFixtureRoots(m, filepath.Join(project, "models"), filepath.Join(project, "assets", "haar"))
 	defer m.Close()
 	want := filepath.Join(install, "model-center", "components")
 	if m.componentRoot != want || m.root != project {

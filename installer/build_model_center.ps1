@@ -284,7 +284,6 @@ $results += @{component_id='haar-consumer'; build='built'; startup_test='passed'
 # Revalidate sources after compilation; refuse evidence for a moving source tree.
 Assert-Inputs
 JsonFile (Join-Path $Output 'build-results.json') $results
-JsonFile (Join-Path $Output 'resource-layout.json') @{schema=1; center='model-center/fengshen-model-center.exe'; components='model-center/components'; root_kind='installed'; model_roots=@(); haar_files=@()}
 Run $go @('-C', $module, 'run', './cmd/build', '-mode', 'delivery', '-root', $Output)
 $exe = Join-Path $Output 'model-center\fengshen-model-center.exe'
 $manifest = Join-Path $centerDir 'manifest.json'

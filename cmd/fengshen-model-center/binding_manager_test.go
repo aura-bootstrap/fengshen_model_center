@@ -456,30 +456,3 @@ func TestTimbreComponentAdapterExactAllowlist(t *testing.T) {
 		}
 	}
 }
-
-func TestBindingRejectsStaleAndUnrecognized(t *testing.T) {
-	m := fixtureManager(t)
-	path := filepath.Join(t.TempDir(), "unknown.gguf")
-	put(t, path, "unknown")
-	if _, err := m.Registration(context.Background(), "local-text", path, 0, false); err != nil {
-		t.Fatal(err)
-	}
-	request := bindingSelection(t, m, "highlight.score", "llama-runtime", "local-text")
-	m.mu.Lock()
-	if _, err := m.resolveBindingLocked(context.Background(), "highlight.score", request); err == nil {
-		t.Fatal("unrecognized registration became executable")
-	}
-	m.mu.Unlock()
-	put(t, filepath.Join(m.root, "models", "ggml-small.bin"), "small")
-	request = bindingSelection(t, m, "highlight.transcribe", "whisper-batch", "whisper-asr")
-	put(t, filepath.Join(m.root, "models", "ggml-small.bin"), "changed-size")
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, err := m.resolveBindingLocked(context.Background(), "highlight.transcribe", request); err == nil {
-		t.Fatal("changed identity/metadata accepted")
-	}
-	m.inventories[request.InventoryID].Stale = true
-	if _, err := m.resolveBindingLocked(context.Background(), "highlight.transcribe", request); err == nil {
-		t.Fatal("stale inventory accepted")
-	}
-}

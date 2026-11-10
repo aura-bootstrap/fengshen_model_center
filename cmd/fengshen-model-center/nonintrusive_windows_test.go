@@ -151,10 +151,6 @@ func TestWindowsNonintrusiveConsumerSentinels(t *testing.T) {
 	}
 	assertUnreadable()
 
-	state := m.State()
-	if state.Registry.Revision != 0 {
-		t.Fatalf("unexpected initial registry: %+v", state.Registry)
-	}
 	if evidence := m.Components(); len(evidence) == 0 {
 		t.Fatal("Components returned no component diagnostics")
 	}
@@ -175,28 +171,6 @@ func TestWindowsNonintrusiveConsumerSentinels(t *testing.T) {
 	if done.Status != "completed" || len(done.Hashes) != 1 || done.Hashes[0].Status != "fingerprint_computed" || done.Hashes[0].SHA256 != hex.EncodeToString(weightSHA[:]) {
 		t.Fatalf("ID-selected hash failed with consumers locked: %+v", done)
 	}
-	registered, err := m.Registration(context.Background(), "demucs", weight, m.State().Registry.Revision, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if registered.Revision != state.Registry.Revision+1 {
-		t.Fatalf("registration revision did not advance: %+v", registered)
-	}
-	removed, err := m.Registration(context.Background(), "demucs", "", registered.Revision, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if removed.Revision != registered.Revision+1 || len(removed.Registrations) != 0 {
-		t.Fatalf("unregistration failed: %+v", removed)
-	}
-	again := scanFixture(t, m)
-	if !again.Complete || again.RegistryRevision != removed.Revision {
-		t.Fatalf("second scan failed: %+v", again)
-	}
-	files, _, err = m.Files(again.ID, "demucs", "", 200)
-	if err != nil || len(files) != 1 {
-		t.Fatalf("default-scope weight disappeared after unregistration: %+v, %v", files, err)
-	}
 	m.State()
 	m.Components()
 	assertUnreadable()
@@ -214,7 +188,7 @@ func TestWindowsNonintrusiveConsumerSentinels(t *testing.T) {
 	// Unchanged hashes prove non-mutation only. The exclusive handles plus
 	// exact sharing-violation probes above prove the sentinels were unreadable
 	// throughout the operations; this does not audit attempted/ignored opens.
-	t.Logf("%d consumer sentinels unreadable across State/Components/scan/hash/register/unregister/rescan; SHA/mtime preserved for sentinels and weight; loopback requests=%d", len(sentinels), requests.Load())
+	t.Logf("%d consumer sentinels unreadable across State/Components/scan/hash; SHA/mtime preserved for sentinels and weight; loopback requests=%d", len(sentinels), requests.Load())
 }
 
 func nonintrusiveDPAPIPayload(t *testing.T, plaintext []byte) []byte {

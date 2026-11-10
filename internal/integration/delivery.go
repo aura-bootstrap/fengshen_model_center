@@ -31,14 +31,6 @@ type deliveryManifest struct {
 	Inference        string         `json:"inference"`
 	CleanEnvironment string         `json:"clean_environment"`
 }
-type resourceLayout struct {
-	Schema     int      `json:"schema"`
-	Center     string   `json:"center"`
-	Components string   `json:"components"`
-	RootKind   string   `json:"root_kind"`
-	ModelRoots []string `json:"model_roots"`
-	HaarFiles  []string `json:"haar_files"`
-}
 type fileStamp struct {
 	ID             string
 	Size, Modified int64
@@ -193,8 +185,7 @@ func (c *Client) verifyDelivery(ctx context.Context) (map[string]fileStamp, erro
 		return nil, errors.New("delivery_schema_invalid")
 	}
 	seen := map[string]bool{}
-	centerFound, layoutFound := false, false
-	var layoutBytes []byte
+	centerFound := false
 	for _, item := range d.Files {
 		key := strings.ToLower(item.Path)
 		if !components.SafeRelative(item.Path) || seen[key] || key == "model-center/delivery.json" {
@@ -218,39 +209,13 @@ func (c *Client) verifyDelivery(ctx context.Context) (map[string]fileStamp, erro
 				return nil, errors.New("delivery_center_mismatch")
 			}
 		}
-		if item.Path == "resource-layout.json" {
-			layoutFound = true
-			layoutBytes, e = trustedJSON(ctx, path, item.SHA256)
-		} else {
-			e = hashFile(ctx, path, item.SHA256, size)
-		}
+		e = hashFile(ctx, path, item.SHA256, size)
 		if e != nil {
 			return nil, e
 		}
 	}
-	if !centerFound || !layoutFound {
+	if !centerFound {
 		return nil, errors.New("delivery_required_file_missing")
-	}
-	var layout resourceLayout
-	if e = strictDeliveryJSON(layoutBytes, &layout); e != nil {
-		return nil, e
-	}
-	if layout.Schema != 1 || layout.Center != centerRelative || layout.Components != "model-center/components" || layout.RootKind != "installed" || layout.ModelRoots == nil || layout.HaarFiles == nil {
-		return nil, errors.New("delivery_layout_invalid")
-	}
-	for i, paths := range [][]string{layout.ModelRoots, layout.HaarFiles} {
-		for _, rel := range paths {
-			if !components.SafeRelative(rel) {
-				return nil, errors.New("delivery_layout_path_invalid")
-			}
-			path := filepath.Join(c.cfg.InstallRoot, filepath.FromSlash(rel))
-			if e = remember(path); e != nil {
-				return nil, e
-			}
-			if files[path].Directory != (i == 0) {
-				return nil, errors.New("delivery_layout_type_invalid")
-			}
-		}
 	}
 	if !stampsCurrent(files) {
 		return nil, errors.New("center_file_changed")

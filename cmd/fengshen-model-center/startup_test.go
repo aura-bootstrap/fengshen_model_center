@@ -7,7 +7,6 @@ import (
 	"flag"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -109,75 +108,5 @@ func TestHaarComponentInfoIsEmbeddedMetadataOnly(t *testing.T) {
 		} else if info.ComponentID != "model-center" || info.Embedded || strings.Join(info.Protocols, ",") != strings.Join([]string{componentprotocol.StreamWSv1, componentprotocol.BatchHTTPv1, componentprotocol.TimbreHTTPv1, componentprotocol.HaarHTTPv1, componentprotocol.LlamaHTTPv1}, ",") {
 			t.Fatalf("center metadata changed: %+v", info)
 		}
-	}
-}
-
-func TestInstalledStartupLayout(t *testing.T) {
-	for _, name := range []string{"valid", "nil_models", "nil_haar", "wrong_components", "model_file", "haar_directory", "duplicate", "escape", "wrong_haar", "missing_optional"} {
-		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
-			if err := os.Mkdir(filepath.Join(root, "models"), 0700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(root, "haarcascade_frontalface_default.xml"), []byte("fixture"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			l := resourceLayout{Schema: 1, Center: "model-center/fengshen-model-center.exe", Components: "model-center/components", RootKind: "installed", ModelRoots: []string{"models"}, HaarFiles: []string{"haarcascade_frontalface_default.xml"}}
-			switch name {
-			case "nil_models":
-				l.ModelRoots = nil
-			case "nil_haar":
-				l.HaarFiles = nil
-			case "wrong_components":
-				l.Components = "components"
-			case "model_file":
-				l.ModelRoots = []string{"haarcascade_frontalface_default.xml"}
-			case "haar_directory":
-				l.HaarFiles = []string{"models"}
-			case "duplicate":
-				l.ModelRoots = []string{"models", "MODELS"}
-			case "escape":
-				l.ModelRoots = []string{"../outside"}
-			case "wrong_haar":
-				l.HaarFiles = []string{"other.xml"}
-			case "missing_optional":
-				l.ModelRoots = []string{"absent"}
-				l.HaarFiles = []string{}
-			}
-			b, err := json.Marshal(l)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(root, "resource-layout.json"), b, 0600); err != nil {
-				t.Fatal(err)
-			}
-			resolved, _, err := resolveStartupRoot(root, "installed")
-			wantValid := name == "valid" || name == "missing_optional"
-			if wantValid && (err != nil || resolved == "") {
-				t.Fatalf("valid layout rejected: %v", err)
-			}
-			if !wantValid && err == nil {
-				t.Fatal("invalid layout accepted")
-			}
-		})
-	}
-}
-
-func TestInstalledStartupRejectsLinkedResource(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir()
-	if err := os.Symlink(outside, filepath.Join(root, "models")); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
-	}
-	l := resourceLayout{Schema: 1, Center: "model-center/fengshen-model-center.exe", Components: "model-center/components", RootKind: "installed", ModelRoots: []string{"models"}, HaarFiles: []string{}}
-	b, err := json.Marshal(l)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "resource-layout.json"), b, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := resolveStartupRoot(root, "installed"); err == nil {
-		t.Fatal("linked model root accepted")
 	}
 }

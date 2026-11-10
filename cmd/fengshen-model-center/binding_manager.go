@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
 
 	"github.com/aura-bootstrap/fengshen_model_center/internal/safefs"
 
@@ -95,7 +95,7 @@ func (m *Manager) resolveBindingLocked(ctx context.Context, scene string, reques
 		return invalid()
 	}
 	inventory := m.inventories[request.InventoryID]
-	registration := m.registry.Snapshot()
+	registration := m.registrySnap
 	if m.closed || inventory == nil || inventory.Stale || request.InventoryID != m.current || inventory.RegistryRevision != registration.Revision || registration.Error != "" {
 		return bindings.Binding{}, failure("center_binding_stale", "盘点或登记已变化，请重新扫描并选择", 409)
 	}
@@ -316,7 +316,7 @@ func componentAdapterSupported(binding bindings.Binding) bool {
 }
 
 func (m *Manager) bindingCurrentLocked(binding bindings.Binding) bool {
-	registration := m.registry.Snapshot()
+	registration := m.registrySnap
 	if registration.Error != "" || registration.Revision != binding.RegistryRevision {
 		return false
 	}

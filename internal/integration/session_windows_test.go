@@ -103,7 +103,7 @@ func TestWindowsSessionHelper(t *testing.T) {
 
 func sessionFixture(t *testing.T) *Client {
 	t.Helper()
-	c, d, _ := deliveryFixture(t)
+	c, d := deliveryFixture(t)
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -283,7 +283,7 @@ func TestWindowsReportFailuresInvalidateSession(t *testing.T) {
 }
 
 func TestWindowsSessionFailClosed(t *testing.T) {
-	for _, mode := range []string{"descriptor", "root", "data", "pid", "creation", "image", "process-file", "process-size", "process-modified", "expected-build", "delivery-digest", "delivery", "layout", "component", "401", "build"} {
+	for _, mode := range []string{"descriptor", "root", "data", "pid", "creation", "image", "process-file", "process-size", "process-modified", "expected-build", "delivery-digest", "delivery", "component", "401", "build"} {
 		t.Run(mode, func(t *testing.T) {
 			c := sessionFixture(t)
 			h := c.cache.Session.Response
@@ -319,8 +319,6 @@ func TestWindowsSessionFailClosed(t *testing.T) {
 				c.cfg.DeliverySHA256 = strings.Repeat("c", 64)
 			case "delivery":
 				writeDeliveryFile(t, c.delivery(), []byte("changed"))
-			case "layout":
-				writeDeliveryFile(t, filepath.Join(c.cfg.Root, "resource-layout.json"), []byte("changed"))
 			case "component":
 				writeDeliveryFile(t, filepath.Join(c.cfg.Root, "components/test/manifest.json"), []byte("changed"))
 			case "401", "build":

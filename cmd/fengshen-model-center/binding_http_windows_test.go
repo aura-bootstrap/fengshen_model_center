@@ -93,10 +93,11 @@ func TestBindingHTTPWindowsActualPipe(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	m, err := NewManager(root, store, []string{filepath.Join(root, "models")})
+	m, err := NewManager(root, store, testManifest(t))
 	if err != nil {
 		t.Fatal(err)
 	}
+	allowFixtureRoots(m, filepath.Join(root, "models"))
 	defer m.Close()
 	put(t, filepath.Join(root, "models", "ggml-small.bin"), "small")
 	selection := bindingSelection(t, m, "highlight.transcribe", "whisper-batch", "whisper-asr")

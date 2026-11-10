@@ -21,7 +21,7 @@ func (m *Manager) StartVerify(ctx context.Context, inventoryID, modelID string, 
 	if inv == nil {
 		return Operation{}, m.inventoryMissing(inventoryID)
 	}
-	if inv.Stale || inv.RegistryRevision != m.registry.Snapshot().Revision || inventoryID != m.current {
+	if inv.Stale || inv.RegistryRevision != m.registrySnap.Revision || inventoryID != m.current {
 		return Operation{}, failure("inventory_stale", "盘点已过期，请重新扫描", 409)
 	}
 	if len(fileIDs) == 0 || len(fileIDs) > 1000 {

@@ -13,7 +13,7 @@ func (m *Manager) dependencySnapshot() integration.DependencySnapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now().UTC()
-	s := integration.DependencySnapshot{Schema: 1, ObservedAt: now, RegistryRevision: m.registry.Snapshot().Revision, Stale: true, Components: []integration.Evidence{}, Models: []integration.Evidence{}, Diagnostics: []string{}}
+	s := integration.DependencySnapshot{Schema: 1, ObservedAt: now, RegistryRevision: m.registrySnap.Revision, Stale: true, Components: []integration.Evidence{}, Models: []integration.Evidence{}, Diagnostics: []string{}}
 	// Exactly one row per fixed ID; neither ordering nor version names select a build.
 	for _, id := range components.IDs {
 		wire := integration.Evidence{ID: id, Packaging: "not_observed", Files: "unknown", Integrity: "not_checked", StartupTest: "not_tested", Optional: id != "model-center", Inference: "not_tested"}

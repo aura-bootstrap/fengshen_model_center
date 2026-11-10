@@ -22,7 +22,6 @@ foreach ($required in @(
     '-X main.buildVersion=$Version',
     "[string]`$StartupReportRef = 'startup-report.json'",
     'startup_report_ref=$StartupReportRef',
-    "components='model-center/components'",
     'model-center\components\model-center\',
     '-X github.com/aura-bootstrap/fengshen_model_center/integration.CenterSHA256=$centerSHA',
     '-X github.com/aura-bootstrap/fengshen_model_center/integration.DeliverySHA256=$deliverySHA',

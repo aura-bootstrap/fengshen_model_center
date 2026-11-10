@@ -134,7 +134,7 @@ func TestReportSnapshotExistenceAndFreshness(t *testing.T) {
 	check(0, 0, 12)
 	id := opaqueID()
 	m.current = id
-	inv := &Inventory{ID: id, RulesVersion: rulesVersion, RegistryRevision: m.registry.Snapshot().Revision, Complete: true, FinishedAt: time.Now().UTC()}
+	inv := &Inventory{ID: id, RulesVersion: rulesVersion, RegistryRevision: m.registrySnap.Revision, Complete: true, FinishedAt: time.Now().UTC()}
 	for _, model := range catalog() {
 		inv.Models = append(inv.Models, ModelState{Model: model, DiscoveryStatus: "missing", Inference: "not_tested"})
 	}
