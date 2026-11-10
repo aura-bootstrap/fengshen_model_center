@@ -163,7 +163,7 @@ class LocalBindingTests(unittest.TestCase):
     def test_build_stages_only_locked_official_bags_and_rechecks_before_manifest(self):
         import hashlib
         import yaml
-        script = (HERE.parent / 'installer/build_model_center.ps1').read_text(encoding='utf-8')
+        script = (HERE.parents[1] / 'installer/build_model_center.ps1').read_text(encoding='utf-8')
         code = script.split("$demucsBags = @'\n", 1)[1].split("\n'@", 1)[0]
         inputs = self.root / 'inputs'
         package = inputs / 'python/Lib/site-packages/demucs'

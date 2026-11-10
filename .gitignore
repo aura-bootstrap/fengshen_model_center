@@ -18,9 +18,7 @@ app.lock
 *.safetensors
 models/*
 !models/.gitkeep
-sidecar/seed-vc/*
-!sidecar/seed-vc/.gitkeep
-sidecar/venv/
+assets/timbre/seed-vc/
 __pycache__/
 *.pyc
 

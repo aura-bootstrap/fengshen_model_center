@@ -64,7 +64,7 @@ $batchTokens=$null; $batchErrors=$null
 $null = [Management.Automation.Language.Parser]::ParseFile($batchPath,[ref]$batchTokens,[ref]$batchErrors)
 if ($batchErrors.Count) { throw ($batchErrors | Out-String) }
 $batch = [IO.File]::ReadAllText($batchPath)
-foreach ($required in @('Build directory must not exist', 'whisper-stream\main.cpp', 'batch_test.cpp', "@('--component-info')", 'Native batch metadata mismatch', 'fengshen.whispercpp.batch/v1', 'Unclosed non-system DLL dependency', "-or -not `$info.vad_supported", "vad_supported=`$true", "model_refs=@('whisper-asr','whisper-vad')", "clean_environment='not_verified'", "inference='not_tested'", 'metadata-smoke.json', 'delivery-index.json')) {
+foreach ($required in @('Build directory must not exist', 'whisper\stream\main.cpp', 'batch_test.cpp', "@('--component-info')", 'Native batch metadata mismatch', 'fengshen.whispercpp.batch/v1', 'Unclosed non-system DLL dependency', "-or -not `$info.vad_supported", "vad_supported=`$true", "model_refs=@('whisper-asr','whisper-vad')", "clean_environment='not_verified'", "inference='not_tested'", 'metadata-smoke.json', 'delivery-index.json')) {
     if (-not $batch.Contains($required)) { throw "Missing strict batch builder contract: $required" }
 }
 if ($batch.Contains("vad_supported=`$false") -or $batch.Contains("model_refs=@('whisper-asr')") -or $batch.Contains("@('--metadata')")) { throw 'Batch must declare native VAD without using the stream metadata entry.' }

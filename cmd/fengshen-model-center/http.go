@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/aura-bootstrap/fengshen_model_center/assets/ui"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/bindings"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
@@ -180,7 +181,7 @@ func newHandler(manager *Manager, token, host string, trusted *integration.Host)
 			mux.ServeHTTP(w, r)
 			return
 		}
-		allowed := map[string]string{"/": "web/index.html", "/styles.css": "web/styles.css", "/app.js": "web/app.js"}
+		allowed := map[string]string{"/": "index.html", "/styles.css": "styles.css", "/app.js": "app.js"}
 		name, ok := allowed[r.URL.Path]
 		if !ok {
 			writeAPIError(w, failure("resource_unknown", "资源不存在", 404))
@@ -191,7 +192,7 @@ func newHandler(manager *Manager, token, host string, trusted *integration.Host)
 			writeAPIError(w, failure("method_not_allowed", "资源不支持该方法", 405))
 			return
 		}
-		body, err := assets.ReadFile(name)
+		body, err := ui.Assets.ReadFile(name)
 		if err != nil {
 			writeAPIError(w, failure("ui_assets_missing", "内嵌界面资源不可用", 503))
 			return

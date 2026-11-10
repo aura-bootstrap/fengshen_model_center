@@ -14,9 +14,9 @@ import (
 	"github.com/aura-bootstrap/fengshen_model_center/internal/safefs"
 )
 
-// Include the complete native/resource tree, so added inputs also invalidate locks.
+// Include the complete non-Go asset tree, so added inputs also invalidate locks.
 func nativeResourceInputs(repo string, add func(string) error) error {
-	return filepath.WalkDir(filepath.Join(repo, "components-src"), func(p string, d os.DirEntry, err error) error {
+	return filepath.WalkDir(filepath.Join(repo, "assets"), func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -137,7 +137,7 @@ func snapshot(ctx context.Context, repo, output string, engines, check bool) err
 			return e
 		}
 	}
-	for _, rel := range []string{"installer/build_model_center.ps1", "installer/build_whisper_stream.ps1", "installer/build_whisper_batch.ps1", "installer/build_llama_runtime.ps1", "sidecar/model_center_frozen_runner.py"} {
+	for _, rel := range []string{"installer/build_model_center.ps1", "installer/build_whisper_stream.ps1", "installer/build_whisper_batch.ps1", "installer/build_llama_runtime.ps1", "assets/timbre/model_center_frozen_runner.py"} {
 		if err = add(filepath.Join(repo, rel)); err != nil {
 			return err
 		}

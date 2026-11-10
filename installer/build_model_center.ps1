@@ -171,7 +171,7 @@ foreach ($id in @('demucs-runner','seedvc-runner')) {
         if (-not (Test-Path $python)) { throw 'Missing locked private build Python.' }
         $stage = Join-Path $Output ($id + '-stage')
         New-Item -ItemType Directory -Path $stage | Out-Null
-        Copy-Item (Join-Path $repo 'sidecar\model_center_frozen_runner.py') (Join-Path $stage 'model_center_frozen_runner.py')
+        Copy-Item (Join-Path $repo 'assets\timbre\model_center_frozen_runner.py') (Join-Path $stage 'model_center_frozen_runner.py')
         $args = @('-I','-m','PyInstaller','--noconfirm','--clean','--onedir','--name',$id,'--distpath',(Join-Path $Output 'freeze-dist'),'--workpath',(Join-Path $stage 'work'),'--specpath',$stage)
         if ($id -eq 'demucs-runner') {
             Assert-Inputs
@@ -259,7 +259,7 @@ foreach ($id in @('whisper-batch','whisper-stream','llama-runtime')) {
         $nativeVersion = '4979e04-stream-v1'
     } else {
         Run $shell @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'build_llama_runtime.ps1'),'-SourceArchive',$inputPath,'-BuildDirectory',$nativeBuild,'-Profile',$LlamaProfile)
-        $nativeLock = Get-Content -LiteralPath (Join-Path $repo 'components-src\llama-runtime\source-lock.json') -Raw | ConvertFrom-Json
+        $nativeLock = Get-Content -LiteralPath (Join-Path $repo 'assets\llama\runtime\source-lock.json') -Raw | ConvertFrom-Json
         $nativeVersion = $nativeLock.profiles.$LlamaProfile.version
     }
     Assert-Inputs

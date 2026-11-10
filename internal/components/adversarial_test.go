@@ -200,7 +200,7 @@ func TestChangesAndCancellationDuringRead(t *testing.T) {
 }
 func TestFrozenInfoDoesNotImportInference(t *testing.T) {
 	// Static contract regression, not a claim that a frozen binary was built.
-	b, err := os.ReadFile(filepath.Join("..", "..", "sidecar", "model_center_frozen_runner.py"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "assets", "timbre", "model_center_frozen_runner.py"))
 	if err != nil {
 		t.Fatal(err)
 	}

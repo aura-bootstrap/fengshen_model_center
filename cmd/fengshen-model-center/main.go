@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"embed"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -24,9 +23,6 @@ import (
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimehttp"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimejobs"
 )
-
-//go:embed web/index.html web/styles.css web/app.js
-var assets embed.FS
 
 var buildVersion = "dev-local"
 

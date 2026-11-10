@@ -285,7 +285,7 @@ func whisperReadMessage(reader io.Reader, kind, id string, episode int, revision
 		if json.Unmarshal(line, &fields) != nil || len(fields) != 6 || fields["protocol"] == nil || fields["type"] == nil || fields["request_id"] == nil || fields["episode_number"] == nil || fields["revision"] == nil || fields["error_code"] == nil {
 			return whisperWire{}, errWhisperResult
 		}
-		// Decoder failure constants in components-src/whisper-stream/main.cpp.
+		// Decoder failure constants in assets/whisper/stream/main.cpp.
 		switch m.ErrorCode {
 		case "window_unstable", "window_limit", "model_load", "state_init", "vad_model_load", "cancelled":
 			return whisperWire{}, &whisperInferenceError{code: m.ErrorCode}

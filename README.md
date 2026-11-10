@@ -15,9 +15,17 @@
 ```text
 .
 ├─ cmd/
-│  ├─ fengshen-model-center/    # 中心主程序（package main）与内嵌 web/
+│  ├─ fengshen-model-center/    # 中心主程序（package main；界面资源在 assets/ui）
 │  ├─ fengshen-shim/            # 执行器适配进程（whisper-stream/whisper-batch/timbre/haar/llama）
 │  └─ build/                    # manifest/delivery/engine-trust/verify-lock 生成器
+├─ assets/                      # 非 Go 代码与资源（模型权重不在此仓库）
+│  ├─ ui/                       # 管理中心 HTML/CSS/JS、Node 测试与内嵌包
+│  ├─ whisper/
+│  │  ├─ batch/                 # whisper-batch 原生源码、CMake 与回归测试
+│  │  └─ stream/                # whisper-stream 原生源码、CMake 与协议/VAD 测试
+│  ├─ llama/
+│  │  └─ runtime/               # llama-runtime 原生源码、CMake 与锁文件
+│  └─ timbre/                   # Demucs/Seed-VC 冻结 runner 与测试
 ├─ internal/
 │  ├─ bindings/                 # 权重绑定与事务
 │  ├─ componentclient/          # 中心 → shim 的 HTTP/WS 客户端（令牌、限额、事件）
@@ -35,11 +43,11 @@
 │  ├─ safefs/                   # Windows 安全文件系统边界
 │  ├─ shim/                     # shim 的 HTTP/WS 服务与旧协议桥
 │  └─ upstream/                 # 复制自 generation_server 的依赖闭包（非测试源码）
-├─ components-src/              # llama-runtime / whisper-batch / whisper-stream 原生源码
 ├─ installer/                   # PowerShell 构建/测试脚本
-├─ sidecar/                     # 冻结 runner；权重与 venv 不入库
 └─ .github/workflows/ci.yml
 ```
+
+`assets/` 按场景存放不属于 Go 业务代码、也不在模型权重库中的构建输入与静态资源；`assets/ui/embed.go` 只是把界面文件嵌入中心二进制的 glue。模型权重仍只由 `%USERPROFILE%\.fengshen\model_manifest.json` 指向。
 
 ## 构建
 
@@ -97,14 +105,14 @@ go run ./cmd/build -mode manifest -root <目录> -template <模板>
 ```powershell
 go vet ./...
 go test ./...
-node --test cmd/fengshen-model-center/web/app.test.cjs cmd/fengshen-model-center/web/evidence.test.cjs
+node --test assets/ui/app.test.cjs assets/ui/evidence.test.cjs
 ```
 
 CI 在 `windows-latest` 运行以上三类检查，并附加仓库守卫：Go 源码禁止 `fengshen-slicer` 导入、禁止权重/二进制扩展名、禁止大于 100 MiB 的文件。
 
 ## 组件构建（可选，需本地工具链）
 
-`installer/` 下的脚本用于生成受控组件与交付清单，要求 MSVC x64、CMake、Ninja 及锁定的上游归档：
+`installer/` 下的脚本用于生成受控组件与交付清单，源码与资源取自 `assets/`，要求 MSVC x64、CMake、Ninja 及锁定的上游归档：
 
 - `build_model_center.ps1`：构建中心与 `fengshen-shim.exe`、生成清单/交付、可选冻结 Demucs/Seed-VC、可选构建原生组件
 - `build_whisper_batch.ps1`、`build_whisper_stream.ps1`、`build_llama_runtime.ps1`：原生组件

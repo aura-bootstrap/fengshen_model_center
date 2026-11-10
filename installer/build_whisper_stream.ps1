@@ -43,7 +43,7 @@ Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
 Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
 $cmake = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
 $ninja = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe'
-$entry = [IO.Path]::GetFullPath((Join-Path $repo 'components-src\whisper-stream'))
+$entry = [IO.Path]::GetFullPath((Join-Path $repo 'assets\whisper\stream'))
 $obj = Join-Path $build 'obj'
 $inputs = @()
 foreach ($p in @($archive, $json, $jsonLicense, (Join-Path $source 'LICENSE'), (Join-Path $entry 'main.cpp'), (Join-Path $entry 'CMakeLists.txt'), (Join-Path $entry 'vad_test.cpp'), (Join-Path $entry 'utf8_test.cpp'), $PSCommandPath, $cmake, $ninja, $tar, (Get-Command cl.exe).Source, (Get-Command link.exe).Source, (Get-Command dumpbin.exe).Source)) {

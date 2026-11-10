@@ -44,10 +44,10 @@ Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-ar
 $cmake = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
 $ninja = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe'
 $ctest = Join-Path (Split-Path $cmake) 'ctest.exe'
-$entry = Join-Path $repo 'components-src\whisper-batch'
+$entry = Join-Path $repo 'assets\whisper\batch'
 $obj = Join-Path $build 'obj'
 $inputs = @()
-foreach ($p in @($archive, $json, $jsonLicense, (Join-Path $source 'LICENSE'), (Join-Path $entry 'main.cpp'), (Join-Path $entry 'CMakeLists.txt'), (Join-Path $entry 'batch_test.cpp'), (Join-Path $repo 'components-src\whisper-stream\main.cpp'), $PSCommandPath, $cmake, $ctest, $ninja, $tar, (Get-Command cl.exe).Source, (Get-Command link.exe).Source, (Get-Command dumpbin.exe).Source)) {
+foreach ($p in @($archive, $json, $jsonLicense, (Join-Path $source 'LICENSE'), (Join-Path $entry 'main.cpp'), (Join-Path $entry 'CMakeLists.txt'), (Join-Path $entry 'batch_test.cpp'), (Join-Path $repo 'assets\whisper\stream\main.cpp'), $PSCommandPath, $cmake, $ctest, $ninja, $tar, (Get-Command cl.exe).Source, (Get-Command link.exe).Source, (Get-Command dumpbin.exe).Source)) {
     $inputs += [ordered]@{name=$p; version=$sourceCommit; sha256=(Hash $p); license=$(if ($p.StartsWith($vs, [StringComparison]::OrdinalIgnoreCase) -or $p -eq $tar) { 'Microsoft-toolchain-build-only' } else { 'MIT/project-source' })}
 }
 $null = Native $cmake @('-S', $entry, '-B', $obj, '-G', 'Ninja', "-DCMAKE_MAKE_PROGRAM=$ninja", '-DCMAKE_BUILD_TYPE=Release', "-DWHISPER_SOURCE_DIR=$source", "-DJSON_HEADER=$json") (Join-Path $build 'configure.log')

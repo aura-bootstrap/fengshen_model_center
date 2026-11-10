@@ -70,7 +70,7 @@ func TestWhisperBatchDeliveryContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"whisper-stream\\main.cpp", "batch_test.cpp", "@('--component-info')", "fengshen.whispercpp.batch/v1", "4979e04-batch-v2", "-or -not $info.vad_supported", "vad_supported=$true", "model_refs=@('whisper-asr','whisper-vad')", "clean_environment='not_verified'", "inference='not_tested'", "Unclosed non-system DLL dependency"} {
+	for _, required := range []string{"whisper\\stream\\main.cpp", "batch_test.cpp", "@('--component-info')", "fengshen.whispercpp.batch/v1", "4979e04-batch-v2", "-or -not $info.vad_supported", "vad_supported=$true", "model_refs=@('whisper-asr','whisper-vad')", "clean_environment='not_verified'", "inference='not_tested'", "Unclosed non-system DLL dependency"} {
 		if !strings.Contains(string(body), required) {
 			t.Fatalf("missing real batch delivery gate: %s", required)
 		}
@@ -83,7 +83,7 @@ func TestWhisperBatchDeliveryContract(t *testing.T) {
 
 func TestNativeResourcesIncludeAddedInputs(t *testing.T) {
 	root := t.TempDir()
-	base := filepath.Join(root, "components-src", "whisper-stream")
+	base := filepath.Join(root, "assets", "whisper", "stream")
 	if err := os.MkdirAll(base, 0700); err != nil {
 		t.Fatal(err)
 	}
