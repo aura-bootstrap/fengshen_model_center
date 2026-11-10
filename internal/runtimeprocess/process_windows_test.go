@@ -4,6 +4,7 @@ package runtimeprocess
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -305,6 +306,7 @@ func TestStreamsAndIdentity(t *testing.T) {
 		t.Fatalf("stdout %q: %v", out, err)
 	}
 	diag, err := io.ReadAll(p.Stderr())
+	diag = bytes.ReplaceAll(diag, []byte("warning: GOCOVERDIR not set, no coverage data emitted\n"), nil)
 	if err != nil || string(diag) != "diagnostic\n" {
 		t.Fatalf("stderr %q: %v", diag, err)
 	}
