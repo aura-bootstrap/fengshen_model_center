@@ -348,7 +348,7 @@ func (h *Host) authorizeSession(r *http.Request, permission SessionPermission, h
 	}
 	header := permissionHeader(permission)
 	// No mixed browser/read/runtime/management credentials, even if one is valid.
-	for _, other := range []string{ReadOnlyHeader, RuntimeHeader, ManagementHeader, "X-Model-Center-Token", "Authorization", "Cookie"} {
+	for _, other := range []string{ReadOnlyHeader, RuntimeHeader, ManagementHeader, "Authorization", "Cookie"} {
 		if other != header && len(r.Header.Values(other)) != 0 {
 			return SessionGrant{}, denied
 		}

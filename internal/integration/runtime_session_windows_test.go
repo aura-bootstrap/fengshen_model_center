@@ -39,9 +39,9 @@ func TestWindowsRuntimeClientExplicitLifecycle(t *testing.T) {
 	}
 	for _, value := range []string{"", "browser-token"} {
 		r := httptest.NewRequest("POST", "http://127.0.0.1:18120"+RuntimeJobsPath, nil)
-		r.Header.Set("X-Model-Center-Token", value)
+		r.Header.Set("Authorization", value)
 		if err = c.AuthenticateSessionRequest(s, r); err == nil || len(r.Header.Values(RuntimeHeader)) != 0 {
-			t.Fatal("client attached runtime secret to mixed browser request")
+			t.Fatal("client attached runtime secret to mixed credential request")
 		}
 	}
 	if err = c.HeartbeatRuntimeSession(context.Background(), s); err != nil {

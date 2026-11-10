@@ -148,7 +148,7 @@ func (c *Client) AuthenticateSessionRequest(s *SessionCredentials, r *http.Reque
 	if !lifecycle && !RuntimeRouteAllowed(s.grant.Permission, r.Method, r.URL.Path) {
 		return errors.New("center_session_request_invalid")
 	}
-	for _, header := range []string{RuntimeHeader, ManagementHeader, ReadOnlyHeader, "X-Model-Center-Token", "Authorization", "Cookie"} {
+	for _, header := range []string{RuntimeHeader, ManagementHeader, ReadOnlyHeader, "Authorization", "Cookie"} {
 		if len(r.Header.Values(header)) != 0 {
 			return errors.New("center_session_request_invalid")
 		}

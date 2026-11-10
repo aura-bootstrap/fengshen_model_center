@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"html"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -27,7 +26,6 @@ import (
 
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
-	"github.com/aura-bootstrap/fengshen_model_center/internal/registry"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/safefs"
 )
 
@@ -139,24 +137,10 @@ func TestRuntimeHTTPE2E(t *testing.T) {
 	t.Logf("owned center confirmed: pid=%d created=%s instance=%s address=%s center_sha256=%s delivery_sha256=%s state=%s", desc.PID, desc.ProcessStartedAt, desc.InstanceID, desc.LoopbackAddress, centerSHA, deliverySHA, stateRoot)
 	browser := &runtimeHTTPBrowser{t: t, ctx: ctx, base: strings.TrimSuffix(status.URL, "/"), http: integration.SessionHTTPClient(30 * time.Second)}
 	defer browser.http.CloseIdleConnections()
-	browser.loadToken()
 	var state State
 	browser.json("GET", "/api/state", nil, 200, &state)
-	if state.Registry.Revision != 0 || len(state.Registry.Registrations) != 0 || state.CurrentInventory != "" {
-		t.Fatal("expected a completely new registration store and no scan")
-	}
-	// Register every requested model before scanning; later writes invalidate inventory.
-	for _, id := range []string{"haar-frontal", "haar-profile", "whisper-asr", "whisper-vad"} {
-		path, ok := paths[id]
-		if !ok {
-			continue
-		}
-		var snapshot registry.Snapshot
-		browser.json("PUT", "/api/registrations/"+id, map[string]any{"path": path, "expected_revision": state.Registry.Revision}, 200, &snapshot)
-		if snapshot.Revision != state.Registry.Revision+1 || !sameScanPath(snapshot.Registrations[id].ResolvedPath, path) {
-			t.Fatal("registration revision/path mismatch")
-		}
-		state.Registry = snapshot
+	if state.CurrentInventory != "" {
+		t.Fatal("expected no scan before explicit request")
 	}
 	scan := browser.operation("/api/operations/scan", map[string]any{"registry_revision": state.Registry.Revision})
 	var inventory Inventory
@@ -278,7 +262,7 @@ func TestRuntimeHTTPE2E(t *testing.T) {
 	defer runtimeHTTPClose(t, client, other)
 	_, err = runtimeClient.Submit(ctx, other, opaqueID(), face.Ref, body)
 	runtimeHTTPRejected(t, err)
-	// Browser/management credentials and a wrong runtime credential cannot infer.
+	// Missing, wrong and management credentials cannot infer.
 	raw, _ := json.Marshal(map[string]any{"request_id": opaqueID(), "binding": face.Ref, "body": body})
 	browser.reject("POST", integration.RuntimeJobsPath, raw, nil)
 	browser.reject("POST", integration.RuntimeJobsPath, raw, map[string]string{integration.RuntimeHeader: strings.Repeat("0", 64)})
@@ -327,7 +311,7 @@ func TestRuntimeHTTPE2E(t *testing.T) {
 	if result.Face != integration.RuntimeNoFace {
 		t.Fatalf("real blank PNG: got %s, want no_face", result.Face)
 	}
-	t.Log("Haar HTTP inference passed: real messi5.jpg=frontal, generated blank PNG=no_face; cross-task and wrong/browser/management credentials rejected; profile is separate")
+	t.Log("Haar HTTP inference passed: real messi5.jpg=frontal, generated blank PNG=no_face; cross-task and missing/wrong/management credentials rejected; profile is separate")
 	t.Run("real_profile", func(t *testing.T) {
 		if profile == "" {
 			t.Skip("profile HTTP NOT RUN: optional explicit PROFILE_JPEG with reviewed genuine source/timestamp/SHA required; no synthetic images")
@@ -572,36 +556,12 @@ func runtimeHTTPWait(t *testing.T, ctx context.Context, ready func() bool) {
 }
 
 type runtimeHTTPBrowser struct {
-	t           *testing.T
-	ctx         context.Context
-	base, token string
-	http        *http.Client
+	t    *testing.T
+	ctx  context.Context
+	base string
+	http *http.Client
 }
 
-func (b *runtimeHTTPBrowser) loadToken() {
-	b.t.Helper()
-	r, err := http.NewRequestWithContext(b.ctx, "GET", b.base+"/", nil)
-	if err != nil {
-		b.t.Fatal(err)
-	}
-	response, err := b.http.Do(r)
-	if err != nil {
-		b.t.Fatal("homepage transport failed")
-	}
-	defer response.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil || response.StatusCode != 200 {
-		b.t.Fatal("real homepage unavailable")
-	}
-	matches := regexp.MustCompile(`<meta\s+name="model-center-token"\s+content="([^"]+)"`).FindAllSubmatch(raw, -1)
-	if len(matches) != 1 {
-		b.t.Fatal("real homepage token meta missing/ambiguous")
-	}
-	b.token = html.UnescapeString(string(matches[0][1]))
-	if len(b.token) != 64 {
-		b.t.Fatal("invalid real homepage credential")
-	}
-}
 func (b *runtimeHTTPBrowser) json(method, path string, value any, status int, out any) {
 	b.t.Helper()
 	var raw []byte
@@ -616,7 +576,6 @@ func (b *runtimeHTTPBrowser) json(method, path string, value any, status int, ou
 	if err != nil {
 		b.t.Fatal(err)
 	}
-	req.Header.Set("X-Model-Center-Token", b.token)
 	if value != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -656,12 +615,8 @@ func (b *runtimeHTTPBrowser) reject(method, path string, raw []byte, headers map
 		b.t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if headers == nil {
-		req.Header.Set("X-Model-Center-Token", b.token)
-	} else {
-		for k, v := range headers {
-			req.Header.Set(k, v)
-		}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	response, err := b.http.Do(req)
 	if err != nil {

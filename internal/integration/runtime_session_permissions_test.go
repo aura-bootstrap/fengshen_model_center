@@ -119,7 +119,7 @@ func TestRuntimeCredentialHeaderIsolation(t *testing.T) {
 		{PermissionRuntime, RuntimeHeader, runtime.Token, "POST", RuntimeJobsPath},
 		{PermissionManagement, ManagementHeader, management.Token, "GET", BindingsPath},
 	} {
-		for _, other := range []string{ReadOnlyHeader, RuntimeHeader, ManagementHeader, "X-Model-Center-Token", "Authorization", "Cookie"} {
+		for _, other := range []string{ReadOnlyHeader, RuntimeHeader, ManagementHeader, "Authorization", "Cookie"} {
 			if other == auth.header {
 				continue
 			}

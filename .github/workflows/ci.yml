@@ -28,16 +28,6 @@ jobs:
       - name: go test
         run: go test ./...
 
-  web:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: node tests
-        run: node --test assets/ui/app.test.cjs assets/ui/evidence.test.cjs
-
   guard:
     runs-on: windows-latest
     steps:

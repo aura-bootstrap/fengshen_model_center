@@ -31,30 +31,28 @@ func httpManager(t *testing.T) *Manager {
 	t.Cleanup(func() { _ = m.Close() })
 	return m
 }
-func TestHTTPSecurityAndContracts(t *testing.T) {
+func TestHTTPContractsAndHeaders(t *testing.T) {
 	m := httpManager(t)
-	h := newHandler(m, "test-secret", "127.0.0.1:18120", nil)
+	h := newHandler(m, "127.0.0.1:18120", nil)
 	tests := []struct {
-		name, method, path, body, host, origin, site, token string
-		want                                                int
+		name, method, path, body, host, origin, site string
+		want                                         int
 	}{
-		{"state", "GET", "/api/state", "", "127.0.0.1:18120", "", "", "test-secret", 200},
-		{"missing token", "GET", "/api/state", "", "127.0.0.1:18120", "", "", "", 403},
-		{"report token", "GET", "/api/report", "", "127.0.0.1:18120", "", "", "", 403},
-		{"report origin", "GET", "/api/report", "", "127.0.0.1:18120", "null", "", "test-secret", 403},
-		{"bad host", "GET", "/", "", "localhost:18120", "", "", "", 403},
-		{"null origin", "GET", "/", "", "127.0.0.1:18120", "null", "", "", 403},
-		{"same site", "GET", "/", "", "127.0.0.1:18120", "", "same-site", "", 403},
-		{"cross site", "GET", "/api/state", "", "127.0.0.1:18120", "", "cross-site", "test-secret", 403},
-		{"static whitelist", "GET", "/catalog.go", "", "127.0.0.1:18120", "", "", "", 404},
-		{"static no directory", "GET", "/web/", "", "127.0.0.1:18120", "", "", "", 404},
-		{"method", "PUT", "/api/state", "{}", "127.0.0.1:18120", "", "", "test-secret", 405},
-		{"unknown field", "POST", "/api/operations/scan", "{\"registry_revision\":0,\"path\":\"x\"}", "127.0.0.1:18120", "", "", "test-secret", 400},
-		{"null body", "POST", "/api/operations/scan", "null", "127.0.0.1:18120", "", "", "test-secret", 400},
-		{"two objects", "POST", "/api/operations/scan", "{}{}", "127.0.0.1:18120", "", "", "test-secret", 400},
-		{"missing revision", "POST", "/api/operations/scan", "{}", "127.0.0.1:18120", "", "", "test-secret", 422},
-		{"oversized", "POST", "/api/operations/scan", strings.Repeat(" ", 8193), "127.0.0.1:18120", "", "", "test-secret", 413},
-		{"file ID not path", "GET", "/api/inventories/unknown/models/local-text/files", "", "127.0.0.1:18120", "", "", "test-secret", 404},
+		{"state", "GET", "/api/state", "", "127.0.0.1:18120", "", "", 200},
+		{"report", "GET", "/api/report", "", "127.0.0.1:18120", "", "", 200},
+		{"report origin", "GET", "/api/report", "", "127.0.0.1:18120", "null", "", 403},
+		{"bad host", "GET", "/", "", "localhost:18120", "", "", 403},
+		{"null origin", "GET", "/", "", "127.0.0.1:18120", "null", "", 403},
+		{"same site", "GET", "/", "", "127.0.0.1:18120", "", "same-site", 403},
+		{"cross site", "GET", "/api/state", "", "127.0.0.1:18120", "", "cross-site", 403},
+		{"unknown resource", "GET", "/catalog.go", "", "127.0.0.1:18120", "", "", 404},
+		{"method", "PUT", "/api/state", "{}", "127.0.0.1:18120", "", "", 405},
+		{"unknown field", "POST", "/api/operations/scan", "{\"registry_revision\":0,\"path\":\"x\"}", "127.0.0.1:18120", "", "", 400},
+		{"null body", "POST", "/api/operations/scan", "null", "127.0.0.1:18120", "", "", 400},
+		{"two objects", "POST", "/api/operations/scan", "{}{}", "127.0.0.1:18120", "", "", 400},
+		{"missing revision", "POST", "/api/operations/scan", "{}", "127.0.0.1:18120", "", "", 422},
+		{"oversized", "POST", "/api/operations/scan", strings.Repeat(" ", 8193), "127.0.0.1:18120", "", "", 413},
+		{"file ID not path", "GET", "/api/inventories/unknown/models/local-text/files", "", "127.0.0.1:18120", "", "", 404},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,7 +60,6 @@ func TestHTTPSecurityAndContracts(t *testing.T) {
 			r.Host = tc.host
 			r.Header.Set("Origin", tc.origin)
 			r.Header.Set("Sec-Fetch-Site", tc.site)
-			r.Header.Set("X-Model-Center-Token", tc.token)
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)
 			if w.Code != tc.want {
@@ -81,11 +78,10 @@ func TestHTTPSecurityAndContracts(t *testing.T) {
 	}
 }
 
-// Requests go through the production handler, including authentication and JSON decoding.
+// Requests go through the production handler and JSON decoding.
 func httpRequest(t *testing.T, h http.Handler, method, path, body string, status int) *httptest.ResponseRecorder {
 	t.Helper()
 	r := httptest.NewRequest(method, "http://127.0.0.1:18120"+path, strings.NewReader(body))
-	r.Header.Set("X-Model-Center-Token", "secret")
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -193,7 +189,7 @@ func httpPoll(t *testing.T, h http.Handler, id, status string) Operation {
 
 func TestHTTPStrictBodies(t *testing.T) {
 	m := httpManager(t)
-	h := newHandler(m, "secret", "127.0.0.1:18120", nil)
+	h := newHandler(m, "127.0.0.1:18120", nil)
 	for _, endpoint := range []struct{ method, path, valid, unknown, wrongType string }{
 		{"POST", "/api/operations/scan", `{"registry_revision":0}`, `{"registry_revision":0,"extra":1}`, `{"registry_revision":"0"}`},
 		{"POST", "/api/operations/verify", `{"inventory_id":"missing","model_id":"whisper-asr","file_ids":[]}`, `{"extra":1}`, `{"file_ids":"x"}`},
@@ -229,7 +225,7 @@ func TestHTTPControlledCancellation(t *testing.T) {
 	for _, kind := range []string{"scan", "verify"} {
 		t.Run(kind, func(t *testing.T) {
 			m := httpManager(t)
-			h := newHandler(m, "secret", "127.0.0.1:18120", nil)
+			h := newHandler(m, "127.0.0.1:18120", nil)
 			entered := make(chan struct{}, 1)
 			// Keep the worker behind the hook until both cancel calls have run.
 			release := make(chan struct{})
@@ -295,33 +291,10 @@ func TestHTTPControlledCancellation(t *testing.T) {
 	}
 }
 
-func TestHTTPRoutesAndStaticWhitelist(t *testing.T) {
+func TestHTTPRoutes(t *testing.T) {
 	m := httpManager(t)
-	h := newHandler(m, "secret", "127.0.0.1:18120", nil)
-	for _, path := range []string{"/", "/styles.css", "/app.js"} {
-		get := httpRequest(t, h, "GET", path, "", 200)
-		if get.Body.Len() == 0 {
-			t.Fatalf("empty asset %s", path)
-		}
-		want := "text/html; charset=utf-8"
-		if path == "/styles.css" {
-			want = "text/css; charset=utf-8"
-		}
-		if path == "/app.js" {
-			want = "text/javascript; charset=utf-8"
-		}
-		if get.Header().Get("Content-Type") != want {
-			t.Fatalf("asset type=%q", get.Header().Get("Content-Type"))
-		}
-		if path == "/" && (strings.Contains(get.Body.String(), "__SESSION_TOKEN__") || !strings.Contains(get.Body.String(), "secret")) {
-			t.Fatal("session token not substituted")
-		}
-		head := httpRequest(t, h, "HEAD", path, "", 200)
-		if head.Body.Len() != 0 || head.Header().Get("Content-Type") != want {
-			t.Fatal("invalid static HEAD")
-		}
-	}
-	for _, path := range []string{"/catalog.go", "/web/", "/web/index.html", "/registrations.json", "/missing", "/app.js/", "/%61pp.js"} {
+	h := newHandler(m, "127.0.0.1:18120", nil)
+	for _, path := range []string{"/", "/styles.css", "/app.js", "/catalog.go", "/web/", "/web/index.html", "/registrations.json", "/missing", "/app.js/", "/%61pp.js"} {
 		code := "resource_unknown"
 		if strings.Contains(path, "%") {
 			code = "path_invalid"
@@ -332,7 +305,6 @@ func TestHTTPRoutesAndStaticWhitelist(t *testing.T) {
 		method, path, allow string
 		json                bool
 	}{
-		{"POST", "/", "GET, HEAD", true}, {"DELETE", "/app.js", "GET, HEAD", true},
 		{"PUT", "/api/state", "GET, HEAD", false}, {"PUT", "/api/operations/scan", "GET, HEAD, POST", false},
 		{"PUT", "/api/inventories/missing", "GET, HEAD", false},
 		{"GET", "/api/operations/missing/cancel", "POST", false},

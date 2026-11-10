@@ -403,7 +403,6 @@ func (c *Client) inspect(ctx context.Context, explicit bool) (Status, error) {
 	s.ProcessState = "running"
 	s.IdentityState = "confirmed"
 	s.HealthState = health.State
-	s.UIAssetsReady = health.UIAssetsReady
 	s.InstanceID = health.InstanceID
 	s.Build = health.Build
 	s.Protocol = Protocol

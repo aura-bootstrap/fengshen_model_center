@@ -150,8 +150,7 @@ func TestBindingHTTPWindowsActualPipe(t *testing.T) {
 	}
 	req.Protocol, req.Request = integration.Protocol, nil
 	read := bindingPipeExchange(t, descriptor.PipeName, req)
-	const browser = "browser-only-test-credential"
-	handler := newHandler(m, browser, address, h)
+	handler := newHandler(m, address, h)
 	path := integration.BindingsPath + "/highlight.transcribe"
 	body, err := json.Marshal(selection)
 	if err != nil {
@@ -164,7 +163,7 @@ func TestBindingHTTPWindowsActualPipe(t *testing.T) {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		// Responses must not echo any credential, even on errors.
-		for _, secret := range []string{management.Token, runtime.Token, read.Token, browser} {
+		for _, secret := range []string{management.Token, runtime.Token, read.Token} {
 			if strings.Contains(w.Body.String(), secret) {
 				t.Fatal("response exposed credential")
 			}
@@ -196,7 +195,6 @@ func TestBindingHTTPWindowsActualPipe(t *testing.T) {
 			target = integration.BindingsPath
 		}
 		for name, headers := range map[string]http.Header{
-			"browser":               {"X-Model-Center-Token": []string{browser}},
 			"read":                  {integration.ReadOnlyHeader: []string{read.Token}},
 			"runtime":               {integration.RuntimeHeader: []string{runtime.Token}},
 			"runtime-in-management": {integration.ManagementHeader: []string{runtime.Token}},
@@ -206,7 +204,7 @@ func TestBindingHTTPWindowsActualPipe(t *testing.T) {
 		} {
 			t.Run(method+"/"+name, func(t *testing.T) { unchanged(func() { expect(method, target, body, headers, 403) }) })
 		}
-		for _, other := range []string{integration.RuntimeHeader, integration.ReadOnlyHeader, "X-Model-Center-Token", "Authorization", "Cookie"} {
+		for _, other := range []string{integration.RuntimeHeader, integration.ReadOnlyHeader, "Authorization", "Cookie"} {
 			for _, value := range []string{"", "mixed"} {
 				headers := admin.Clone()
 				headers[other] = []string{value}

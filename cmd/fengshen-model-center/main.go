@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -105,10 +103,6 @@ func run(listen, root, rootKind, data, integrationData, installRoot, centerSHA, 
 		return err
 	}
 	defer listener.Close()
-	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return err
-	}
 	address := listener.Addr().String()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -139,7 +133,7 @@ func run(listen, root, rootKind, data, integrationData, installRoot, centerSHA, 
 				default:
 					state = "read_only"
 				}
-				return integration.Health{UIAssetsReady: true, State: state}
+				return integration.Health{State: state}
 			},
 			Dependencies:        manager.dependencySnapshot,
 			Dashboard:           manager.dashboardSnapshot,
@@ -173,7 +167,7 @@ func run(listen, root, rootKind, data, integrationData, installRoot, centerSHA, 
 			manager.runtimeHandler = runtimehttp.New(host, store, jobs, manager.validateRuntimeBinding)
 		}
 	}
-	server := &http.Server{Handler: newHandler(manager, hex.EncodeToString(tokenBytes), address, host), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{Handler: newHandler(manager, address, host), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	ipcDone := make(chan struct{})
 	if host != nil {
 		go func() {
@@ -194,7 +188,7 @@ func run(listen, root, rootKind, data, integrationData, installRoot, centerSHA, 
 		defer cancel()
 		_ = server.Shutdown(shutdown)
 	}()
-	log.Printf("本地模型管理中心 http://%s · 根目录 %s", address, resolved)
+	log.Printf("本地模型中心服务 http://%s · 根目录 %s", address, resolved)
 	err = server.Serve(listener)
 	stop()
 	if host != nil {

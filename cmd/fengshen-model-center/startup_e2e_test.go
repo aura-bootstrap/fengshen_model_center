@@ -197,7 +197,7 @@ func TestTrustedCenterE2E(t *testing.T) {
 	if !watcher.owns(desc.PID, desc.ProcessStartedAt) || watcher.count() != before+1 {
 		t.Fatal("descriptor does not bind exactly one newly created, OS-identified child")
 	}
-	if status.IdentityState != "confirmed" || status.HealthState != "ready" || !status.UIAssetsReady || status.URL != "http://127.0.0.1:18120/" {
+	if status.IdentityState != "confirmed" || status.HealthState != "ready" || status.URL != "http://127.0.0.1:18120/" {
 		t.Fatalf("bad first status: %+v", status)
 	}
 	if status.InstanceID == "" || status.InstanceID != desc.InstanceID {

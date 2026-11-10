@@ -66,13 +66,12 @@ type Descriptor struct {
 }
 
 type Health struct {
-	Schema        int    `json:"schema"`
-	Product       string `json:"product"`
-	Protocol      string `json:"protocol"`
-	Build         string `json:"build"`
-	InstanceID    string `json:"instance_id"`
-	UIAssetsReady bool   `json:"ui_assets_ready"`
-	State         string `json:"state"`
+	Schema     int    `json:"schema"`
+	Product    string `json:"product"`
+	Protocol   string `json:"protocol"`
+	Build      string `json:"build"`
+	InstanceID string `json:"instance_id"`
+	State      string `json:"state"`
 }
 
 type Status struct {
@@ -80,7 +79,6 @@ type Status struct {
 	ProcessState  string    `json:"process_state"`
 	IdentityState string    `json:"identity_state"`
 	HealthState   string    `json:"health_state"`
-	UIAssetsReady bool      `json:"ui_assets_ready"`
 	InstanceID    string    `json:"instance_id,omitempty"`
 	Build         string    `json:"build,omitempty"`
 	Protocol      string    `json:"protocol,omitempty"`

@@ -1,25 +1,24 @@
 # 峰神模型中心（fengshen_model_center）
 
-峰神切片生成器的本地模型中心：按用户清单盘点本地模型资产、核验二进制组件交付证据，并在本机回环地址提供管理界面与只读 HTTP 汇总报告。本仓库是从 `fengshen_slicer` 独立出来的自包含项目，不依赖其工作副本即可构建、测试与运行。中心与所有执行器之间的通信只走本机回环 HTTP/WS，旧 stdio/CLI 协议被隔离在 shim 进程内部。
+峰神切片生成器的本地模型中心：按用户清单盘点本地模型资产、核验二进制组件交付证据，并在本机回环地址提供只读 HTTP 汇总报告与无头 JSON API。中心没有 Web 界面，也不做页面会话认证。本仓库是从 `fengshen_slicer` 独立出来的自包含项目，不依赖其工作副本即可构建、测试与运行。中心与所有执行器之间的通信只走本机回环 HTTP/WS，旧 stdio/CLI 协议被隔离在 shim 进程内部。
 
 ## 能力边界
 
 - 只读扫描与容量统计：逻辑磁盘大小、文件身份归并、重复候选线索，按需 SHA-256。
 - 权重与执行组件分开：源码、开发 venv 不等于已交付；组件清单只做声明与完整性证据，不安装、不构建、不执行推理。
 - 12 个稳定本地权重目录项（含双口径识别与分片组成规则）。
-- 本机回环 HTTP 管理界面；API 需要页面内注入的会话令牌。
-- 内外隔离：对外只有中心 API；内部执行器经 `fengshen-shim` 以回环 HTTP/WS 访问，每实例一次性令牌与严格限额。
+- 无 Web 界面；管理操作走同机回环 JSON API（扫描、校验、组件证据），不设页面会话令牌。
+- 内外隔离：对外只有中心 API；内部执行器经 `fengshen-shim` 以回环 HTTP/WS 访问，每实例一次性令牌与严格限额。三端集成、运行时与绑定接口继续使用内部会话授权。
 
 ## 目录结构
 
 ```text
 .
 ├─ cmd/
-│  ├─ fengshen-model-center/    # 中心主程序（package main；界面资源在 assets/ui）
+│  ├─ fengshen-model-center/    # 中心主程序（package main，无 Web 界面）
 │  ├─ fengshen-shim/            # 执行器适配进程（whisper-stream/whisper-batch/timbre/haar/llama）
 │  └─ build/                    # manifest/delivery/engine-trust/verify-lock 生成器
 ├─ assets/                      # 非 Go 代码与资源（模型权重不在此仓库）
-│  ├─ ui/                       # 管理中心 HTML/CSS/JS、Node 测试与内嵌包
 │  ├─ whisper/
 │  │  ├─ batch/                 # whisper-batch 原生源码、CMake 与回归测试
 │  │  └─ stream/                # whisper-stream 原生源码、CMake 与协议/VAD 测试
@@ -47,7 +46,7 @@
 └─ .github/workflows/ci.yml
 ```
 
-`assets/` 按场景存放不属于 Go 业务代码、也不在模型权重库中的构建输入与静态资源；`assets/ui/embed.go` 只是把界面文件嵌入中心二进制的 glue。模型权重仍只由 `%USERPROFILE%\.fengshen\model_manifest.json` 指向。
+`assets/` 按场景存放不属于 Go 业务代码、也不在模型权重库中的构建输入与资源。模型权重仍只由 `%USERPROFILE%\.fengshen\model_manifest.json` 指向。
 
 ## 构建
 
@@ -105,10 +104,9 @@ go run ./cmd/build -mode manifest -root <目录> -template <模板>
 ```powershell
 go vet ./...
 go test ./...
-node --test assets/ui/app.test.cjs assets/ui/evidence.test.cjs
 ```
 
-CI 在 `windows-latest` 运行以上三类检查，并附加仓库守卫：Go 源码禁止 `fengshen-slicer` 导入、禁止权重/二进制扩展名、禁止大于 100 MiB 的文件。
+CI 在 `windows-latest` 运行以上检查，并附加仓库守卫：Go 源码禁止 `fengshen-slicer` 导入、禁止权重/二进制扩展名、禁止大于 100 MiB 的文件。
 
 ## 组件构建（可选，需本地工具链）
 
@@ -127,7 +125,7 @@ CI 在 `windows-latest` 运行以上三类检查，并附加仓库守卫：Go �
 
 ## 与 fengshen_slicer 的关系
 
-本仓库承载模型中心的服务、界面、组件清单与构建工具；`fengshen_slicer` 中的三端客户端仍保留原副本。切换方式（整体替换或子模块）是后续独立任务，本仓库不修改 `fengshen_slicer`。
+本仓库承载模型中心的服务、组件清单与构建工具；`fengshen_slicer` 中的三端客户端仍保留原副本。切换方式（整体替换或子模块）是后续独立任务，本仓库不修改 `fengshen_slicer`。
 
 ## 许可
 

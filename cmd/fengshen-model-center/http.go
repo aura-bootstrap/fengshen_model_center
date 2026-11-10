@@ -1,23 +1,20 @@
 package main
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
-	"html"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/aura-bootstrap/fengshen_model_center/assets/ui"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/bindings"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/registry"
 )
 
-func newHandler(manager *Manager, token, host string, trusted *integration.Host) http.Handler {
+func newHandler(manager *Manager, host string, trusted *integration.Host) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/report", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.RawQuery != "" || r.URL.ForceQuery {
@@ -165,14 +162,6 @@ func newHandler(manager *Manager, token, host string, trusted *integration.Host)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
-			mixed := false
-			for _, header := range []string{integration.ReadOnlyHeader, integration.RuntimeHeader, integration.ManagementHeader, "Authorization", "Cookie"} {
-				mixed = mixed || len(r.Header.Values(header)) != 0
-			}
-			if mixed || len(r.Header.Values("X-Model-Center-Token")) != 1 || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Model-Center-Token")), []byte(token)) != 1 {
-				writeAPIError(w, failure("session_invalid", "管理会话已失效，请重新打开中心页面", 403))
-				return
-			}
 			if r.Method == http.MethodHead {
 				w.Header().Set("Allow", "GET")
 				writeAPIError(w, failure("method_not_allowed", "接口不支持该方法", 405))
@@ -181,34 +170,7 @@ func newHandler(manager *Manager, token, host string, trusted *integration.Host)
 			mux.ServeHTTP(w, r)
 			return
 		}
-		allowed := map[string]string{"/": "index.html", "/styles.css": "styles.css", "/app.js": "app.js"}
-		name, ok := allowed[r.URL.Path]
-		if !ok {
-			writeAPIError(w, failure("resource_unknown", "资源不存在", 404))
-			return
-		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			writeAPIError(w, failure("method_not_allowed", "资源不支持该方法", 405))
-			return
-		}
-		body, err := ui.Assets.ReadFile(name)
-		if err != nil {
-			writeAPIError(w, failure("ui_assets_missing", "内嵌界面资源不可用", 503))
-			return
-		}
-		switch r.URL.Path {
-		case "/":
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			body = []byte(strings.ReplaceAll(string(body), "__SESSION_TOKEN__", html.EscapeString(token)))
-		case "/app.js":
-			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		default:
-			w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		}
-		if r.Method != http.MethodHead {
-			_, _ = w.Write(body)
-		}
+		writeAPIError(w, failure("resource_unknown", "资源不存在", 404))
 	})
 }
 func decodeBody(w http.ResponseWriter, r *http.Request, out any) bool {

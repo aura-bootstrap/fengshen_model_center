@@ -291,7 +291,7 @@ func (h *Host) AuthorizeReadOnly(r *http.Request) bool {
 	if len(r.Header.Values("Sec-Fetch-Site")) > 1 || site != "" && site != "same-origin" && site != "none" {
 		return false
 	}
-	if len(r.Header.Values(RuntimeHeader)) != 0 || len(r.Header.Values(ManagementHeader)) != 0 || len(r.Header.Values("X-Model-Center-Token")) != 0 || len(r.Header.Values("Authorization")) != 0 || len(r.Header.Values("Cookie")) != 0 {
+	if len(r.Header.Values(RuntimeHeader)) != 0 || len(r.Header.Values(ManagementHeader)) != 0 || len(r.Header.Values("Authorization")) != 0 || len(r.Header.Values("Cookie")) != 0 {
 		return false
 	}
 	if len(r.Header.Values(ReadOnlyHeader)) != 1 {

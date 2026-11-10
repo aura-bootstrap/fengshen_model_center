@@ -156,7 +156,7 @@ func TestRuntimeCapabilityVADProjection(t *testing.T) {
 }
 
 func TestRuntimeCapabilitiesExactReadRoute(t *testing.T) {
-	for _, mode := range []string{"POST", "PUT", "DELETE", "HEAD", "query", "empty-query", "escaped", "trailing-slash", "missing-token", "runtime-token", "management-token", "mixed-runtime", "mixed-management", "mixed-browser", "empty-browser", "duplicate-token"} {
+	for _, mode := range []string{"POST", "PUT", "DELETE", "HEAD", "query", "empty-query", "escaped", "trailing-slash", "missing-token", "runtime-token", "management-token", "mixed-runtime", "mixed-management", "duplicate-token"} {
 		t.Run(mode, func(t *testing.T) {
 			h, token, _ := runtimeCapabilitiesFixture(t)
 			h.cfg.RuntimeCapabilities = func() (RuntimeCapabilities, error) {
@@ -189,10 +189,6 @@ func TestRuntimeCapabilitiesExactReadRoute(t *testing.T) {
 				r.Header.Set(RuntimeHeader, "")
 			case "mixed-management":
 				r.Header.Set(ManagementHeader, "")
-			case "mixed-browser":
-				r.Header.Set("X-Model-Center-Token", token)
-			case "empty-browser":
-				r.Header.Set("X-Model-Center-Token", "")
 			case "duplicate-token":
 				r.Header.Add(ReadOnlyHeader, token)
 			}

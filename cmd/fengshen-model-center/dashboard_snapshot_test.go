@@ -164,7 +164,7 @@ func TestReportSnapshotExistenceAndFreshness(t *testing.T) {
 
 func TestReportHTTPReadsCenterOwnedSnapshot(t *testing.T) {
 	m := fixtureManager(t)
-	h := newHandler(m, "secret", "127.0.0.1:18120", nil)
+	h := newHandler(m, "127.0.0.1:18120", nil)
 	w := httpRequest(t, h, "GET", "/api/report", "", 200)
 	var report struct {
 		Summary struct{ Total, Unknown int }

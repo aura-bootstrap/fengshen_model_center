@@ -64,10 +64,11 @@ func TestHostReadOnlyDoesNotAcceptManagementToken(t *testing.T) {
 		t.Fatal(e)
 	}
 	req := httptest.NewRequest("GET", "http://127.0.0.1:18120"+HealthPath, nil)
-	req.Header.Set("X-Model-Center-Token", token)
+	req.Header.Set(ManagementHeader, token)
 	if h.AuthorizeReadOnly(req) {
 		t.Fatal("management header accepted")
 	}
+	req.Header.Del(ManagementHeader)
 	req.Header.Set(ReadOnlyHeader, token)
 	req.Method = "POST"
 	if h.AuthorizeReadOnly(req) {
