@@ -2,7 +2,7 @@
 #pragma push_macro("main")
 #undef main
 #define main fengshen_stream_entry_not_called
-#include "../whisper-stream/main.cpp"
+#include "../stream/main.cpp"
 #pragma pop_macro("main")
 #include <filesystem>
 #include <fstream>
