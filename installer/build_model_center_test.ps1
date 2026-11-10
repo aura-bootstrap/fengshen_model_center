@@ -7,6 +7,7 @@ if ($errors.Count) { throw ($errors | Out-String) }
 $source = [IO.File]::ReadAllText($scriptPath)
 foreach ($required in @(
     "[string[]]`$Protocols = @()",
+    "fengshen-shim.exe",
     "[string]`$MetadataArgument = '--component-info'",
     "protocols=`$Protocols",
     "arguments=@(`$MetadataArgument)",

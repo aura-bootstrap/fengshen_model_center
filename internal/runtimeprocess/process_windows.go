@@ -97,7 +97,7 @@ func filetime(t syscall.Filetime) uint64 { return uint64(t.HighDateTime)<<32 | u
 
 // minimalEnvironment does not read the parent's environment, including its
 // SystemRoot/PATH/TEMP values. Only OS-reported local system paths are used.
-func minimalEnvironment(key string) ([]uint16, error) {
+func minimalEnvironment(extra []string) ([]uint16, error) {
 	queryDirectory := func(name string) (string, error) {
 		buf := make([]uint16, 32768)
 		n, _, err := kernel32.NewProc(name).Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
@@ -121,17 +121,17 @@ func minimalEnvironment(key string) ([]uint16, error) {
 	// Avoid GetTempPath/os.TempDir: both can consume untrusted parent variables.
 	temp := filepath.Join(windows, "Temp")
 	entries := []string{"PATH=" + system + ";" + windows, "SystemRoot=" + windows, "TEMP=" + temp, "TMP=" + temp, "windir=" + windows}
-	if key != "" {
-		entries = append([]string{"LLAMA_API_KEY=" + key}, entries...)
+	if len(extra) != 0 {
+		entries = append(append([]string(nil), extra...), entries...)
 	}
 	// Entries are sorted case-insensitively; every entry and the block terminate
 	// with NUL. Keep the explicit block alive until CreateProcess returns.
 	return utf16.Encode([]rune(strings.Join(entries, "\x00") + "\x00\x00")), nil
 }
 
-func launch(ctx context.Context, b VerifiedBinary, o Options, key string) (*nativeProcess, *os.File, *os.File, *os.File, Identity, error) {
+func launch(ctx context.Context, b VerifiedBinary, o Options, extraEnv []string) (*nativeProcess, *os.File, *os.File, *os.File, Identity, error) {
 	var id Identity
-	environment, err := minimalEnvironment(key)
+	environment, err := minimalEnvironment(extraEnv)
 	if err != nil {
 		return nil, nil, nil, nil, id, err
 	}

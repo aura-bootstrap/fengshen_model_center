@@ -44,7 +44,7 @@ func timbreTestExecutor(t *testing.T) *Executor {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	return &Executor{assets: s, scratch: t.TempDir()}
+	return newShimTestExecutor(t, s)
 }
 func timbreTestReq(scene string) runtimejobs.Request {
 	id := "demucs-runner"

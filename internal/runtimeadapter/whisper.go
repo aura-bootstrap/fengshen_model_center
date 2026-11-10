@@ -2,6 +2,7 @@ package runtimeadapter
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -16,17 +17,19 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/audio"
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/transcript"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/componentclient"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/componentprotocol"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeassets"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimejobs"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeprocess"
-	"github.com/aura-bootstrap/fengshen_model_center/internal/safefs"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/audio"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/transcript"
 )
 
 var errWhisperResult = errors.New("center_result_invalid")
@@ -67,16 +70,18 @@ func (e *Executor) transcribe(ctx context.Context, req runtimejobs.Request, reso
 	// Reconstruct the descriptor from the manifest instead of trusting an unrelated
 	// VerifiedBinary supplied alongside it. Start verifies it again before launch.
 	var pinned runtimeprocess.VerifiedBinary
+	entryPath := ""
 	for _, file := range resolved.Manifest.Files {
 		if file.Path == resolved.Manifest.Entry {
+			entryPath = filepath.Join(resolved.ComponentRoot, filepath.FromSlash(file.Path))
 			var err error
-			pinned, err = runtimeprocess.VerifyBinary(filepath.Join(resolved.ComponentRoot, filepath.FromSlash(file.Path)), file.SHA256, component+"/"+resolved.Manifest.Version, req.Binding.SHA256)
+			pinned, err = runtimeprocess.VerifyBinary(entryPath, file.SHA256, component+"/"+resolved.Manifest.Version, req.Binding.SHA256)
 			if err != nil {
 				return runtimejobs.Result{}, errors.New("center_component_invalid")
 			}
 		}
 	}
-	if pinned == (runtimeprocess.VerifiedBinary{}) || pinned != resolved.Entry {
+	if pinned == (runtimeprocess.VerifiedBinary{}) || pinned != resolved.Entry || entryPath == "" {
 		return runtimejobs.Result{}, errors.New("center_component_invalid")
 	}
 	if input.VAD && !integration.WhisperVADSupported(req.Body.Component) {
@@ -141,50 +146,44 @@ func (e *Executor) transcribe(ctx context.Context, req runtimejobs.Request, reso
 		return runtimejobs.Result{}, errWhisperResult
 	}
 	if input.Stream {
-		return e.whisperStream(ctx, req, resolved, pcm, count, path, meta.SHA256, model, vadModel, emit)
+		return e.whisperStream(ctx, req, resolved, entryPath, pcm, count, path, meta.SHA256, model, vadModel, emit)
 	}
-	output := filepath.Join(dir, "transcript")
-	args := []string{"-m", model, "-f", path, "-l", "zh", "-t", "4", "-ml", "1", "-sow", "-ojf", "-of", output, "-np", "-ng"}
+	session, err := e.newShimSession(ctx, "whisper-batch", entryPath, "", "")
+	if err != nil {
+		return runtimejobs.Result{}, err
+	}
+	defer session.Close()
+	models := map[string][]string{"whisper-asr": {model}}
 	if input.VAD {
-		args = append(args, "--vad", "--vad-model", vadModel)
+		models["whisper-vad"] = []string{vadModel}
 	}
-	p, err := e.supervisor.Start(ctx, resolved.Entry, whisperProcessOptions(args, 1, 4<<20))
+	if emit != nil {
+		if err := emit(runtimejobs.Progress{Stage: runtimejobs.StageRunning}); err != nil {
+			return runtimejobs.Result{}, err
+		}
+	}
+	snap, err := session.client.SubmitJob(ctx, componentprotocol.JobRequest{
+		Protocol:  componentprotocol.BatchHTTPv1,
+		Kind:      "whisper-batch",
+		RequestID: req.RequestID,
+		Input:     componentprotocol.JobInput{AudioPath: path},
+		Models:    models,
+		Options:   componentprotocol.JobOptions{VAD: input.VAD},
+	})
 	if err != nil {
-		return runtimejobs.Result{}, err
+		return runtimejobs.Result{}, whisperContextError(ctx, errors.New("center_whisper_failed"))
 	}
-	defer p.Close()
-	done := make(chan struct{})
-	go func() { _, _ = io.Copy(io.Discard, p.Stderr()); close(done) }()
-	_, readErr := io.Copy(io.Discard, p.Stdout())
-	waitErr := p.Wait()
-	<-done
-	if err := ctx.Err(); err != nil {
-		return runtimejobs.Result{}, err
-	}
-	if readErr != nil || waitErr != nil {
-		return runtimejobs.Result{}, errors.New("center_whisper_failed")
-	}
-	// Only our fixed output name is read. Child stdout is never interpreted as a path.
-	root, err := safefs.Open(dir)
+	snap, err = session.client.WaitJob(ctx, snap.ID)
 	if err != nil {
-		return runtimejobs.Result{}, errWhisperResult
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = session.client.CancelJob(cancelCtx, snap.ID)
+		cancel()
+		return runtimejobs.Result{}, whisperContextError(ctx, errors.New("center_whisper_failed"))
 	}
-	defer root.Close()
-	leaf, err := root.Derive("transcript.json")
-	if err != nil {
-		return runtimejobs.Result{}, errWhisperResult
+	if snap.State != componentprotocol.JobSucceeded {
+		return runtimejobs.Result{}, whisperContextError(ctx, errors.New("center_whisper_failed"))
 	}
-	defer leaf.Close()
-	resultFile, observed, err := leaf.OpenFile("transcript.json")
-	if err != nil {
-		return runtimejobs.Result{}, errWhisperResult
-	}
-	if observed.Size > runtimejobs.MaxResultBytes {
-		resultFile.Close()
-		return runtimejobs.Result{}, errWhisperResult
-	}
-	data, err := io.ReadAll(io.LimitReader(resultFile, runtimejobs.MaxResultBytes+1))
-	resultFile.Close()
+	data, err := session.client.DownloadArtifact(ctx, snap.ID, "transcript.json", runtimejobs.MaxResultBytes)
 	if err != nil {
 		return runtimejobs.Result{}, errWhisperResult
 	}
@@ -244,10 +243,6 @@ func whisperPCM(f *os.File, size int64) (io.Reader, int64, error) {
 		pos += length + (length & 1)
 	}
 	return nil, 0, errWhisperResult
-}
-
-func whisperProcessOptions(args []string, in, out int64) runtimeprocess.Options {
-	return runtimeprocess.Options{Args: args, MaxStdinBytes: in, MaxStdoutBytes: out, MaxStderrBytes: 4 << 20, BufferBytes: 2 << 20}
 }
 
 type whisperWire struct {
@@ -322,20 +317,34 @@ func whisperReadMessage(reader io.Reader, kind, id string, episode int, revision
 	return m, nil
 }
 
-func whisperSend(w io.Writer, v any) error {
-	b, err := json.Marshal(v)
-	if err != nil || len(b)+1 > 1<<20 {
-		return errWhisperResult
+func whisperWSRead(ctx context.Context, stream *componentclient.Stream, kind, id string, episode int, revision uint64) (whisperWire, error) {
+	raw, err := stream.ReadRaw(ctx)
+	if err != nil {
+		return whisperWire{}, err
 	}
-	b = append(b, '\n')
-	n, err := w.Write(b)
-	if err == nil && n != len(b) {
-		err = io.ErrShortWrite
+	data := bytes.ReplaceAll(raw, []byte(componentprotocol.StreamWSv1), []byte(transcript.StreamProtocolVersion))
+	data = append(data, '\n')
+	m, readErr := whisperReadMessage(bytes.NewReader(data), kind, id, episode, revision)
+	if readErr == nil {
+		return m, nil
 	}
-	return err
+	var e struct {
+		Protocol      string `json:"protocol"`
+		Type          string `json:"type"`
+		RequestID     string `json:"request_id"`
+		EpisodeNumber int    `json:"episode_number"`
+		ErrorCode     string `json:"error_code"`
+	}
+	if json.Unmarshal(raw, &e) == nil && e.Protocol == transcript.StreamProtocolVersion && e.Type == "error" && e.RequestID == id && e.EpisodeNumber == episode {
+		switch e.ErrorCode {
+		case "window_unstable", "window_limit", "model_load", "state_init", "vad_model_load", "cancelled":
+			return whisperWire{}, &whisperInferenceError{code: e.ErrorCode}
+		}
+	}
+	return whisperWire{}, readErr
 }
 
-func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, resolved Resolved, pcm io.Reader, count int64, path, digest, model, vadModel string, emit runtimejobs.Emit) (runtimejobs.Result, error) {
+func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, resolved Resolved, entryPath string, pcm io.Reader, count int64, path, digest, model, vadModel string, emit runtimejobs.Emit) (runtimejobs.Result, error) {
 	input := *req.Body.Transcribe
 	if emit == nil {
 		return runtimejobs.Result{}, errors.New("center_request_invalid")
@@ -353,27 +362,26 @@ func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, r
 	if err != nil {
 		return runtimejobs.Result{}, errWhisperResult
 	}
-	// Per-response hypotheses can repeat history, but both total output and each
-	// line remain bounded. One outstanding PCM message supplies pipe backpressure.
 	chunks := (count + 31999) / 32000
-	args := []string{transcript.StreamProtocolArgument, "--model", model, "--threads", "4"}
-	if input.VAD {
-		args = append(args, "--vad", "--vad-model", vadModel)
-	}
-	p, err := e.supervisor.Start(ctx, resolved.Entry, whisperProcessOptions(args, count*3+chunks*1024+4096, (chunks+2)*(1<<20)))
+	session, err := e.newShimSession(ctx, "whisper-stream", entryPath, "", "")
 	if err != nil {
 		return runtimejobs.Result{}, err
 	}
-	defer p.Close()
-	stderrDone := make(chan struct{})
-	go func() { _, _ = io.Copy(io.Discard, p.Stderr()); close(stderrDone) }()
-	defer func() { p.Close(); <-stderrDone }()
-	reader := bufio.NewReaderSize(p.Stdout(), (1<<20)+1)
+	defer session.Close()
+	stream, err := session.client.DialStream(ctx)
+	if err != nil {
+		return runtimejobs.Result{}, whisperContextError(ctx, errors.New("center_whisper_failed"))
+	}
+	defer stream.Close()
 	id := "E" + strconv.Itoa(input.EpisodeNumber) + "-" + digest[:16]
-	if err := whisperSend(p.Stdin(), map[string]any{"protocol": transcript.StreamProtocolVersion, "type": "start", "request_id": id, "episode_number": input.EpisodeNumber, "duration_sec": duration, "format": "s16le/16000/1", "options": options}); err != nil {
+	models := map[string]string{"whisper-asr": model}
+	if input.VAD {
+		models["whisper-vad"] = vadModel
+	}
+	if err := stream.Send(ctx, map[string]any{"protocol": componentprotocol.StreamWSv1, "type": "start", "request_id": id, "episode_number": input.EpisodeNumber, "duration_sec": duration, "format": "s16le/16000/1", "options": options, "models": models, "vad": input.VAD}); err != nil {
 		return runtimejobs.Result{}, whisperContextError(ctx, err)
 	}
-	if _, err := whisperReadMessage(reader, "ready", id, input.EpisodeNumber, 0); err != nil {
+	if _, err := whisperWSRead(ctx, stream, "ready", id, input.EpisodeNumber, 0); err != nil {
 		return runtimejobs.Result{}, whisperContextError(ctx, err)
 	}
 	var previous *runtimejobs.StreamCommit
@@ -391,7 +399,6 @@ func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, r
 			return err
 		}
 		previous = &projected
-		// Give emit a detached copy; callers cannot mutate validation history.
 		raw, _ := json.Marshal(projected)
 		var event runtimejobs.StreamCommit
 		_ = json.Unmarshal(raw, &event)
@@ -415,10 +422,10 @@ func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, r
 			return runtimejobs.Result{}, errWhisperResult
 		}
 		end := offset + samples
-		if err := whisperSend(p.Stdin(), map[string]any{"protocol": transcript.StreamProtocolVersion, "type": "audio", "request_id": id, "episode_number": input.EpisodeNumber, "revision": revision, "start_sec": float64(offset) / 16000, "end_sec": float64(end) / 16000, "sample_count": samples, "pcm": base64.StdEncoding.EncodeToString(buffer[:samples*2])}); err != nil {
+		if err := stream.Send(ctx, map[string]any{"protocol": componentprotocol.StreamWSv1, "type": "audio", "request_id": id, "episode_number": input.EpisodeNumber, "revision": revision, "start_sec": float64(offset) / 16000, "end_sec": float64(end) / 16000, "sample_count": samples, "pcm": base64.StdEncoding.EncodeToString(buffer[:samples*2])}); err != nil {
 			return runtimejobs.Result{}, whisperContextError(ctx, err)
 		}
-		m, err := whisperReadMessage(reader, "hypothesis", id, input.EpisodeNumber, revision)
+		m, err := whisperWSRead(ctx, stream, "hypothesis", id, input.EpisodeNumber, revision)
 		if err != nil {
 			return runtimejobs.Result{}, whisperContextError(ctx, err)
 		}
@@ -430,23 +437,17 @@ func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, r
 		}
 		offset = end
 	}
-	if err := whisperSend(p.Stdin(), map[string]any{"protocol": transcript.StreamProtocolVersion, "type": "finalize", "request_id": id, "episode_number": input.EpisodeNumber, "revision": revision, "committed_through_sec": duration}); err != nil {
+	if err := stream.Send(ctx, map[string]any{"protocol": componentprotocol.StreamWSv1, "type": "finalize", "request_id": id, "episode_number": input.EpisodeNumber, "revision": revision, "committed_through_sec": duration}); err != nil {
 		return runtimejobs.Result{}, whisperContextError(ctx, err)
 	}
-	m, err := whisperReadMessage(reader, "final", id, input.EpisodeNumber, revision)
+	m, err := whisperWSRead(ctx, stream, "final", id, input.EpisodeNumber, revision)
 	if err != nil {
 		return runtimejobs.Result{}, whisperContextError(ctx, err)
 	}
 	if math.Abs(*m.Through-duration) > 1e-9 {
 		return runtimejobs.Result{}, errWhisperResult
 	}
-	// Wait for a clean exit before publishing a terminal commit; reject extra output.
-	_ = p.Stdin().Close()
-	extra, err := io.ReadAll(io.LimitReader(reader, 2))
-	if err != nil || len(extra) != 0 {
-		return runtimejobs.Result{}, whisperContextError(ctx, errWhisperResult)
-	}
-	if err := p.Wait(); err != nil {
+	if err := stream.ExpectNormalClose(ctx); err != nil {
 		return runtimejobs.Result{}, whisperContextError(ctx, errors.New("center_whisper_failed"))
 	}
 	if err := publish(m); err != nil {
@@ -458,7 +459,6 @@ func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, r
 	if previous == nil || !previous.Final {
 		return runtimejobs.Result{}, errWhisperResult
 	}
-	// Events are deltas; the terminal result contains the complete accepted prefix.
 	final := *previous
 	final.Items = committedItems
 	return runtimejobs.Result{Component: req.Body.Component, Stream: &final}, nil

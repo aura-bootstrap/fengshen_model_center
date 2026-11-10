@@ -221,7 +221,11 @@ func TestStartLlamaRejectsMalformedKeys(t *testing.T) {
 
 func TestExplicitUnicodeEnvironmentBlock(t *testing.T) {
 	for _, key := range []string{"", strings.Repeat("cd", 32)} {
-		block, err := minimalEnvironment(key)
+		var extra []string
+		if key != "" {
+			extra = []string{"LLAMA_API_KEY=" + key}
+		}
+		block, err := minimalEnvironment(extra)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -531,7 +535,7 @@ func TestSuspendedStartupFailureKillsAndWaits(t *testing.T) {
 	}
 	before := children()
 	for i := 0; i < 5; i++ {
-		n, _, _, _, _, err := launch(testContext(t), bad, o, "")
+		n, _, _, _, _, err := launch(testContext(t), bad, o, nil)
 		if err == nil {
 			n.closeJob()
 			n.wait()

@@ -18,13 +18,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/transcript"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeassets"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimejobs"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeprocess"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/transcript"
 )
 
 // The contract helper is this Go test executable, not an ASR implementation.
@@ -44,7 +44,10 @@ func init() {
 			os.Exit(2)
 		}
 		model := os.Args[2]
-		want := []string{"-m", model, "-f", filepath.Join(filepath.Dir(output), "input.wav"), "-l", "zh", "-t", "4", "-ml", "1", "-sow", "-ojf", "-of", output, "-np", "-ng"}
+		if len(os.Args) < 5 || filepath.Base(os.Args[4]) != "input.wav" {
+			os.Exit(12)
+		}
+		want := []string{"-m", model, "-f", os.Args[4], "-l", "zh", "-t", "4", "-ml", "1", "-sow", "-ojf", "-of", output, "-np", "-ng"}
 		if strings.HasPrefix(filepath.Base(model), "vad-on-") {
 			want = append(want, "--vad", "--vad-model", filepath.Join(filepath.Dir(model), "trusted-vad.bin"))
 		}
@@ -172,6 +175,13 @@ func whisperTestWAV(seconds int) []byte {
 	return b
 }
 
+func writeWhisperModel(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("model"), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func whisperTestResolved(t *testing.T, exe string, stream bool) (Resolved, runtimejobs.Request) {
 	t.Helper()
 	b, err := os.ReadFile(exe)
@@ -192,7 +202,10 @@ func whisperTestResolved(t *testing.T, exe string, stream bool) (Resolved, runti
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Resolved{Manifest: m, ComponentRoot: filepath.Dir(exe), Entry: entry, Models: []ModelFile{{ModelID: "whisper-asr", Path: filepath.Join(t.TempDir(), "model.bin")}}}, req
+	modelDir := t.TempDir()
+	writeWhisperModel(t, filepath.Join(modelDir, "model.bin"))
+	writeWhisperModel(t, filepath.Join(modelDir, "trusted-vad.bin"))
+	return Resolved{Manifest: m, ComponentRoot: filepath.Dir(exe), Entry: entry, Models: []ModelFile{{ModelID: "whisper-asr", Path: filepath.Join(modelDir, "model.bin")}}}, req
 }
 
 func TestWhisperBatchV2VADFixedArguments(t *testing.T) {
@@ -209,7 +222,7 @@ func TestWhisperBatchV2VADFixedArguments(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer store.Close()
-		e := &Executor{assets: store, scratch: t.TempDir()}
+		e := newShimTestExecutor(t, store)
 		defer e.supervisor.Close()
 		resolved, req := whisperTestResolved(t, exe, false)
 		resolved.Manifest.Version, req.Body.Component.Version = "4979e04-batch-v2", "4979e04-batch-v2"
@@ -223,6 +236,8 @@ func TestWhisperBatchV2VADFixedArguments(t *testing.T) {
 			name = "vad-on-model.bin"
 		}
 		resolved.Models = []ModelFile{{ModelID: "whisper-asr", Path: filepath.Join(modelDir, name)}, {ModelID: "whisper-vad", Path: filepath.Join(modelDir, "trusted-vad.bin")}}
+		writeWhisperModel(t, filepath.Join(modelDir, name))
+		writeWhisperModel(t, filepath.Join(modelDir, "trusted-vad.bin"))
 		req.Body.Transcribe.VAD = vad
 		wav := whisperTestWAV(6)
 		a, err := store.Upload(context.Background(), req.TaskID, req.SessionID, runtimeassets.WAV, int64(len(wav)), bytes.NewReader(wav))
@@ -257,7 +272,7 @@ func TestWhisperSupervisedBatchAndStream(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			e := &Executor{assets: store, scratch: t.TempDir()}
+			e := newShimTestExecutor(t, store)
 			defer e.supervisor.Close()
 			resolved, req := whisperTestResolved(t, exe, stream)
 			wav := whisperTestWAV(6)
@@ -365,6 +380,9 @@ func TestWhisperRuntimeJobsCumulativeResult(t *testing.T) {
 			if tc.vad {
 				resolved.Models = append(resolved.Models, ModelFile{ModelID: "whisper-vad", Path: filepath.Join(filepath.Dir(resolved.Models[0].Path), "trusted-vad.bin")})
 			}
+			for _, mf := range resolved.Models {
+				writeWhisperModel(t, mf.Path)
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			wav := whisperTestWAV(tc.seconds)
@@ -379,6 +397,7 @@ func TestWhisperRuntimeJobsCumulativeResult(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			e.launchShim = inProcessShimLauncher(t)
 			manager, err := runtimejobs.New(e, runtimejobs.Options{})
 			if err != nil {
 				e.Close()
@@ -458,7 +477,7 @@ func TestWhisperVADArgvAndSilence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		e := &Executor{assets: store, scratch: t.TempDir()}
+		e := newShimTestExecutor(t, store)
 		resolved, req := whisperTestResolved(t, exe, true)
 		name := "vad-off-silence.bin"
 		if vad {
@@ -466,6 +485,9 @@ func TestWhisperVADArgvAndSilence(t *testing.T) {
 		}
 		resolved.Models[0].Path = filepath.Join(t.TempDir(), name)
 		resolved.Models = append(resolved.Models, ModelFile{ModelID: "whisper-vad", Path: filepath.Join(filepath.Dir(resolved.Models[0].Path), "trusted-vad.bin")})
+		for _, mf := range resolved.Models {
+			writeWhisperModel(t, mf.Path)
+		}
 		req.Body.Transcribe.VAD = vad
 		wav := whisperTestWAV(2)
 		a, err := store.Upload(context.Background(), req.TaskID, req.SessionID, runtimeassets.WAV, int64(len(wav)), bytes.NewReader(wav))
@@ -513,10 +535,11 @@ func TestWhisperCustomStreamOptionsReachNativeAndCommitter(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			e := &Executor{assets: store, scratch: t.TempDir()}
+			e := newShimTestExecutor(t, store)
 			defer e.supervisor.Close()
 			resolved, req := whisperTestResolved(t, exe, true)
 			resolved.Models[0].Path = filepath.Join(t.TempDir(), "options-"+hex.EncodeToString(raw)+".bin")
+			writeWhisperModel(t, resolved.Models[0].Path)
 			if options != nil {
 				wire, _ := json.Marshal(req.Body)
 				wire = []byte(strings.TrimSuffix(string(wire), "}}") + `,"options":` + string(raw) + `}}`)
@@ -658,7 +681,7 @@ func TestWhisperRealInference(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Body.Transcribe.AssetID = a.ID()
-	e := &Executor{assets: store, scratch: t.TempDir()}
+	e := newShimTestExecutor(t, store)
 	defer e.supervisor.Close()
 	commits, words := 0, 0
 	result, err := e.transcribe(ctx, req, Resolved{Manifest: m, ComponentRoot: filepath.Dir(manifestPath), Entry: entry, Models: models}, func(p runtimejobs.Progress) error {

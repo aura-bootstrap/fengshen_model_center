@@ -4,51 +4,17 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"path/filepath"
 	"slices"
 
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/facehaar"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeassets"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimejobs"
-	"github.com/aura-bootstrap/fengshen_model_center/internal/safefs"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/facehaar"
 )
 
-func faceBoundXML(ctx context.Context, path string) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if !filepath.IsAbs(path) {
-		return nil, errTimbreBinding
-	}
-	parent, err := safefs.Open(filepath.Dir(path))
-	if err != nil {
-		return nil, err
-	}
-	defer parent.Close()
-	leaf, err := parent.Derive(filepath.Base(path))
-	if err != nil {
-		return nil, err
-	}
-	defer leaf.Close()
-	f, entry, err := leaf.OpenFile(filepath.Base(path))
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	const maxXML = 8 << 20
-	if entry.Size <= 0 || entry.Size > maxXML {
-		return nil, errTimbreBinding
-	}
-	data, err := io.ReadAll(io.LimitReader(timbreContextReader{ctx, f}, maxXML+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) != entry.Size {
-		return nil, errTimbreBinding
-	}
-	return data, ctx.Err()
-}
-
+// face sends the bound image to the Haar shim over loopback HTTP. The center no
+// longer executes the detector in-process.
 func (e *Executor) face(ctx context.Context, req runtimejobs.Request, r Resolved, emit runtimejobs.Emit) (runtimejobs.Result, error) {
 	empty := runtimejobs.Result{}
 	if err := ctx.Err(); err != nil {
@@ -62,7 +28,7 @@ func (e *Executor) face(ctx context.Context, req runtimejobs.Request, r Resolved
 	}
 	paths := map[string]string{}
 	for _, f := range r.Models {
-		if (f.ModelID != "haar-frontal" && f.ModelID != "haar-profile") || paths[f.ModelID] != "" {
+		if (f.ModelID != "haar-frontal" && f.ModelID != "haar-profile") || paths[f.ModelID] != "" || !filepath.IsAbs(f.Path) {
 			return empty, errTimbreBinding
 		}
 		paths[f.ModelID] = f.Path
@@ -70,18 +36,11 @@ func (e *Executor) face(ctx context.Context, req runtimejobs.Request, r Resolved
 	if len(paths) != 2 || paths["haar-frontal"] == paths["haar-profile"] {
 		return empty, errTimbreBinding
 	}
-	frontal, err := faceBoundXML(ctx, paths["haar-frontal"])
+	session, err := e.newShimSession(ctx, "haar", "", paths["haar-frontal"], paths["haar-profile"])
 	if err != nil {
 		return empty, err
 	}
-	profile, err := faceBoundXML(ctx, paths["haar-profile"])
-	if err != nil {
-		return empty, err
-	}
-	detector, err := facehaar.New(frontal, profile)
-	if err != nil {
-		return empty, errTimbreBinding
-	}
+	defer session.Close()
 	src, meta, err := e.assets.Open(ctx, req.TaskID, req.Body.Face.AssetID)
 	if err != nil {
 		return empty, err
@@ -97,31 +56,35 @@ func (e *Executor) face(ctx context.Context, req runtimejobs.Request, r Resolved
 	if len(data) > facehaar.MaxImageBytes {
 		return empty, runtimeassets.ErrInvalid
 	}
+	contentType := http.DetectContentType(data)
+	if contentType != "image/jpeg" && contentType != "image/png" {
+		return empty, runtimeassets.ErrInvalid
+	}
 	if emit != nil {
 		if err = emit(runtimejobs.Progress{Stage: runtimejobs.StageRunning}); err != nil {
 			return empty, err
 		}
 	}
-	detected, err := detector.Detect(ctx, data)
+	kind, err := session.client.Classify(ctx, contentType, data)
 	if err != nil {
 		if ctx.Err() != nil {
 			return empty, ctx.Err()
 		}
 		return empty, runtimeassets.ErrInvalid
 	}
-	var kind runtimejobs.FaceResult
-	switch detected.Kind {
-	case facehaar.Frontal:
-		kind = runtimejobs.Frontal
-	case facehaar.Profile:
-		kind = runtimejobs.Profile
-	case facehaar.NoFace:
-		kind = runtimejobs.NoFace
+	var result runtimejobs.FaceResult
+	switch kind {
+	case "frontal":
+		result = runtimejobs.Frontal
+	case "profile":
+		result = runtimejobs.Profile
+	case "no_face":
+		result = runtimejobs.NoFace
 	default:
 		return empty, runtimeassets.ErrInvalid
 	}
 	if err = ctx.Err(); err != nil {
 		return empty, err
 	}
-	return runtimejobs.Result{Component: req.Body.Component, Face: kind}, nil
+	return runtimejobs.Result{Component: req.Body.Component, Face: result}, nil
 }

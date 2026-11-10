@@ -70,7 +70,7 @@ $env:GOWORK = 'off'
 $env:CGO_ENABLED = '0'
 $goVersion = (& $go version | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Go toolchain unavailable.' }
-$env:GOFLAGS = '-mod=readonly'
+$env:GOFLAGS = '-mod=vendor'
 $env:PATH = (Split-Path $go) + [IO.Path]::PathSeparator + $env:PATH
 # Resolve Go's complete dependency/embed/test graph, local replaces and compiler
 # inputs; also pin this script and the frozen entry. No mutable venv is trusted.
@@ -139,9 +139,12 @@ $centerDir = Join-Path $Output ('model-center\components\model-center\' + $Versi
 New-Item -ItemType Directory -Path $centerDir -Force | Out-Null
 Assert-Inputs
 Run $go @('-C', $module, 'build', '-trimpath', '-buildvcs=false', '-ldflags', "-X main.buildVersion=$Version", '-o', (Join-Path $centerDir 'fengshen-model-center.exe'), './cmd/fengshen-model-center')
+Run $go @('-C', $module, 'build', '-trimpath', '-buildvcs=false', '-o', (Join-Path $centerDir 'fengshen-shim.exe'), './cmd/fengshen-shim')
+Copy-Item (Join-Path $centerDir 'fengshen-shim.exe') (Join-Path $Output 'model-center/fengshen-shim.exe')
 $centerBuildInputs = @(@{name='Go'; version=$goVersion; sha256=(Get-FileHash $go -Algorithm SHA256).Hash.ToLower(); license='BSD-3-Clause'})
-Metadata-Smoke 'model-center' $centerDir 'fengshen-model-center.exe' 'go' -BuildInputs $centerBuildInputs
+Metadata-Smoke 'model-center' $centerDir 'fengshen-model-center.exe' 'go' -Protocols @('fengshen.stream.ws/v1','fengshen.batch.http/v1','fengshen.timbre.http/v1','fengshen.haar.http/v1') -BuildInputs $centerBuildInputs
 Copy-Item (Join-Path $centerDir 'fengshen-model-center.exe') (Join-Path $Output 'model-center\fengshen-model-center.exe')
+Copy-Item (Join-Path $centerDir 'fengshen-shim.exe') (Join-Path $Output 'model-center/fengshen-shim.exe')
 $results += @{component_id='model-center'; build='built'; startup_test='passed'; clean_environment='not_verified'; inference='not_tested'; reason='Version/platform-checked --component-info only; host isolation and inference were not tested.'}
 $lockData = $null
 if ($Inputs -and $InputLock) {

@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/aura-bootstrap/fengshen_model_center/internal/componentprotocol"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/safefs"
 )
@@ -101,5 +102,19 @@ func writeHaarComponentInfo(w io.Writer) {
 }
 
 func writeComponentInfo(w io.Writer) {
-	_ = json.NewEncoder(w).Encode(map[string]any{"schema": 1, "component_id": "model-center", "version": buildVersion, "os": runtime.GOOS, "arch": runtime.GOARCH, "packaging": "go", "inference": "not_tested"})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"schema":       1,
+		"component_id": "model-center",
+		"version":      buildVersion,
+		"os":           runtime.GOOS,
+		"arch":         runtime.GOARCH,
+		"packaging":    "go",
+		"protocols": []string{
+			componentprotocol.StreamWSv1,
+			componentprotocol.BatchHTTPv1,
+			componentprotocol.TimbreHTTPv1,
+			componentprotocol.HaarHTTPv1,
+		},
+		"inference": "not_tested",
+	})
 }

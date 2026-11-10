@@ -322,7 +322,7 @@ func delivery(ctx context.Context, root string) error {
 		if rel == "model-center/delivery.json" {
 			return nil
 		}
-		if filepath.Base(rel) != "manifest.json" && filepath.Base(rel) != "startup-report.json" && rel != "model-center/fengshen-model-center.exe" && rel != "resource-layout.json" && rel != "source-inputs.lock.json" && rel != "external-inputs.lock.json" && rel != "compiler-inputs.lock.json" && rel != "dependency-inputs.lock.json" && rel != "toolchain.json" && rel != "build-results.json" {
+		if filepath.Base(rel) != "manifest.json" && filepath.Base(rel) != "startup-report.json" && rel != "model-center/fengshen-model-center.exe" && rel != "model-center/fengshen-shim.exe" && rel != "resource-layout.json" && rel != "source-inputs.lock.json" && rel != "external-inputs.lock.json" && rel != "compiler-inputs.lock.json" && rel != "dependency-inputs.lock.json" && rel != "toolchain.json" && rel != "build-results.json" {
 			return nil
 		}
 		f, e := hash(ctx, s, a.Relative)

@@ -62,30 +62,6 @@ func TestFaceRejectBindingAndCancellation(t *testing.T) {
 		}
 	}
 }
-func TestFaceBoundXMLLimit(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "bound.xml")
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = f.Truncate((8 << 20) + 1)
-	f.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = faceBoundXML(context.Background(), path); err == nil {
-		t.Fatal("oversized XML read")
-	}
-	if err = os.WriteFile(path, []byte("invalid XML"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	r := faceTestResolved()
-	r.Models = []ModelFile{{"haar-frontal", path}, {"haar-profile", filepath.Join(dir, "missing.xml")}}
-	if got, err := timbreTestExecutor(t).face(context.Background(), faceTestRequest(), r, nil); err == nil || got.Face != "" {
-		t.Fatal(got, err)
-	}
-}
 
 // Real model inference is opt-in. A profile sample requires a separate explicit
 // input with externally reviewed provenance; a mirrored derivative is not a second real sample.

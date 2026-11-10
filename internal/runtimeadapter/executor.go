@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -34,6 +35,8 @@ type Executor struct {
 	assets     *runtimeassets.Store
 	scratch    string
 	supervisor runtimeprocess.Supervisor
+	shimPath   string
+	launchShim shimLauncher
 	mu         sync.Mutex
 	closed     bool
 	llama      *llamaRuntime
@@ -56,7 +59,11 @@ func New(resolve Resolver, assets *runtimeassets.Store, scratch string) (*Execut
 	if err != nil {
 		return nil, err
 	}
-	return &Executor{resolve: resolve, assets: assets, scratch: dir}, nil
+	e := &Executor{resolve: resolve, assets: assets, scratch: dir}
+	if exe, err := os.Executable(); err == nil {
+		e.shimPath = filepath.Join(filepath.Dir(exe), "fengshen-shim.exe")
+	}
+	return e, nil
 }
 
 func (e *Executor) initLocked() {

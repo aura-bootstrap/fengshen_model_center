@@ -32,7 +32,8 @@ func nativeResourceInputs(repo string, add func(string) error) error {
 
 // snapshot uses Go's own resolved dependency and embed input lists, including
 // tests, module metadata, the compiler tree, and this pipeline's non-Go inputs.
-// It never downloads: callers set GOPROXY=off, GOTOOLCHAIN=local, -mod=readonly.
+// It never downloads: callers set GOPROXY=off, GOTOOLCHAIN=local; dependencies
+// are vendored, so the module cache is not consulted for remote fetches.
 func snapshot(ctx context.Context, repo, output string, engines, check bool) error {
 	goexe, err := exec.LookPath("go")
 	if err != nil {
@@ -71,7 +72,7 @@ func snapshot(ctx context.Context, repo, output string, engines, check bool) err
 		modules = append(modules, "src/admin_client/backend", "src/dev_client/backend", "src/user_client/backend")
 	}
 	for _, mod := range modules {
-		args := []string{"-C", filepath.Join(repo, mod), "list", "-mod=readonly", "-deps", "-test", "-json", "./..."}
+		args := []string{"-C", filepath.Join(repo, mod), "list", "-deps", "-test", "-json", "./..."}
 		if mod != "." {
 			args[len(args)-1] = "./cmd/fengshen-engine"
 		}

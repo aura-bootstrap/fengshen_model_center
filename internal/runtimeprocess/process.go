@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -136,7 +137,42 @@ type Supervisor struct {
 // identity before resuming the original thread. Every post-creation failure kills
 // and waits. Platforms without atomic job-list creation fail closed, no fallback.
 func (s *Supervisor) Start(ctx context.Context, b VerifiedBinary, o Options) (*Process, error) {
-	return s.start(ctx, b, o, "")
+	return s.start(ctx, b, o, nil)
+}
+
+// StartWithEnv is a trusted adapter-only API. It adds only the explicitly
+// validated entries to Start's minimal system environment; it never inherits the
+// parent environment and rejects reserved system variables and line breaks.
+func (s *Supervisor) StartWithEnv(ctx context.Context, b VerifiedBinary, o Options, env map[string]string) (*Process, error) {
+	if len(env) == 0 || len(env) > 4 {
+		return nil, errors.New("runtimeprocess: invalid environment")
+	}
+	entries := make([]string, 0, len(env))
+	for name, value := range env {
+		if !validEnvName(name) || strings.ContainsAny(value, "\x00\r\n") || len(value) > 4096 {
+			return nil, errors.New("runtimeprocess: invalid environment")
+		}
+		switch strings.ToUpper(name) {
+		case "PATH", "SYSTEMROOT", "TEMP", "TMP", "WINDIR":
+			return nil, errors.New("runtimeprocess: reserved environment")
+		}
+		entries = append(entries, name+"="+value)
+	}
+	sort.Strings(entries)
+	return s.start(ctx, b, o, entries)
+}
+
+func validEnvName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for i, c := range name {
+		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '_' || i > 0 && c >= '0' && c <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // StartLlama is a trusted adapter-only API, not an environment override. key must
@@ -152,10 +188,10 @@ func (s *Supervisor) StartLlama(ctx context.Context, b VerifiedBinary, o Options
 			return nil, errors.New("runtimeprocess: invalid internal llama key")
 		}
 	}
-	return s.start(ctx, b, o, key)
+	return s.start(ctx, b, o, []string{"LLAMA_API_KEY=" + key})
 }
 
-func (s *Supervisor) start(ctx context.Context, b VerifiedBinary, o Options, key string) (*Process, error) {
+func (s *Supervisor) start(ctx context.Context, b VerifiedBinary, o Options, extraEnv []string) (*Process, error) {
 	if ctx == nil {
 		return nil, errors.New("runtimeprocess: nil context")
 	}
@@ -187,7 +223,7 @@ func (s *Supervisor) start(ctx context.Context, b VerifiedBinary, o Options, key
 	p := &Process{supervisor: s, binary: b, done: make(chan struct{})}
 	p.stdout = newOutput(o.BufferBytes, p.stop)
 	p.stderr = newOutput(o.BufferBytes, p.stop)
-	native, in, out, diag, identity, err := launch(ctx, b, o, key)
+	native, in, out, diag, identity, err := launch(ctx, b, o, extraEnv)
 	if err != nil {
 		return nil, err
 	}

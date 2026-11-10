@@ -12,121 +12,19 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
+	"time"
 
+	"github.com/aura-bootstrap/fengshen_model_center/internal/componentprotocol"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeassets"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimejobs"
-	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeprocess"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/safefs"
 )
 
 var errTimbreBinding = errors.New("center_model_incompatible")
 
 // timbrePlan contains only resolved model paths and fixed runner options.
-func timbrePlan(r Resolved, convert bool) ([]string, error) {
-	groups := map[string][]string{}
-	seen := map[string]bool{}
-	for _, f := range r.Models {
-		if !filepath.IsAbs(f.Path) || seen[f.Path] {
-			return nil, errTimbreBinding
-		}
-		seen[f.Path] = true
-		groups[f.ModelID] = append(groups[f.ModelID], f.Path)
-	}
-	if convert {
-		device := r.Binding.Device
-		if device != "cpu" && device != "cuda" {
-			return nil, errTimbreBinding
-		}
-		if len(groups) != 4 || len(groups["campplus"]) != 1 {
-			return nil, errTimbreBinding
-		}
-		seed := groups["seed-vc"]
-		if len(seed) != 2 {
-			return nil, errTimbreBinding
-		}
-		var checkpoint, config string
-		for _, p := range seed {
-			switch strings.ToLower(filepath.Ext(p)) {
-			case ".yml", ".yaml":
-				config = p
-			case ".pth", ".pt":
-				checkpoint = p
-			default:
-				return nil, errTimbreBinding
-			}
-		}
-		whisper, err := boundDirectory(groups["seed-whisper"], []string{"config.json", "preprocessor_config.json"}, []string{"model.safetensors", "pytorch_model.bin"})
-		if err != nil {
-			return nil, err
-		}
-		big, err := boundDirectory(groups["bigvgan"], []string{"config.json", "bigvgan_generator.pt"}, nil)
-		if err != nil || checkpoint == "" || config == "" {
-			return nil, errTimbreBinding
-		}
-		return []string{"--checkpoint", checkpoint, "--config", config, "--seed-whisper", whisper, "--campplus", groups["campplus"][0], "--bigvgan", big, "--steps", "25", "--pitch", "0", "--device", device}, nil
-	}
-	if len(groups) != 1 {
-		return nil, errTimbreBinding
-	}
-	model, id := "htdemucs", "demucs"
-	signatures := []string{"955717e8"}
-	if len(groups["demucs-ft"]) != 0 {
-		model, id = "htdemucs_ft", "demucs-ft"
-		signatures = []string{"f7e0c4bc", "d12395a8", "92cfc3b6", "04573f0d"}
-	}
-	paths := groups[id]
-	if len(paths) != len(signatures) {
-		return nil, errTimbreBinding
-	}
-	bag, err := timbreBagResource(r, model)
-	if err != nil {
-		return nil, err
-	}
-	repo, format := "", ""
-	weights := map[string]string{}
-	for _, p := range paths {
-		if repo == "" {
-			repo = filepath.Dir(p)
-		}
-		if filepath.Dir(p) != repo {
-			return nil, errTimbreBinding
-		}
-		base := filepath.Base(p)
-		ext := filepath.Ext(p)
-		sig := strings.TrimSuffix(base, ext)
-		current := "hf-safetensors"
-		if ext == ".th" {
-			current = "th"
-			sig = strings.SplitN(sig, "-", 2)[0]
-		} else if ext != ".safetensors" {
-			return nil, errTimbreBinding
-		}
-		if format != "" && current != format || weights[sig] != "" {
-			return nil, errTimbreBinding
-		}
-		format = current
-		weights[sig] = p
-	}
-	if bag == "" || len(weights) != len(signatures) {
-		return nil, errTimbreBinding
-	}
-	device := r.Binding.Device
-	if device != "cpu" && device != "cuda" {
-		return nil, errTimbreBinding
-	}
-	args := []string{"--model", model, "--repo", repo, "--bag", bag, "--weight-format", format, "--device", device}
-	for _, sig := range signatures {
-		if weights[sig] == "" {
-			return nil, errTimbreBinding
-		}
-		args = append(args, "--weight", weights[sig])
-	}
-	return args, nil
-}
-
 // Bags are immutable component resources, never model assets or adjacent YAMLs.
 func timbreBagResource(r Resolved, model string) (string, error) {
 	if r.Manifest.ComponentID != "demucs-runner" || !filepath.IsAbs(r.ComponentRoot) {
@@ -280,7 +178,11 @@ func (e *Executor) timbre(ctx context.Context, req runtimejobs.Request, r Resolv
 	if convert && (req.Body.Convert.Pitch != 0 || r.Binding.Device != "cuda") {
 		return empty, errTimbreBinding
 	}
-	args, err := timbrePlan(r, convert)
+	job, err := timbreJobRequest(r, convert, req.RequestID)
+	if err != nil {
+		return empty, err
+	}
+	target, err := componentEntryPath(r)
 	if err != nil {
 		return empty, err
 	}
@@ -301,38 +203,161 @@ func (e *Executor) timbre(ctx context.Context, req runtimejobs.Request, r Resolv
 	}
 	outputs := []string{"vocals.wav", "accompaniment.wav"}
 	rate, channels := uint32(44100), uint16(2)
+	job.Input.AudioPath = filepath.Join(dir, "source.wav")
 	if convert {
 		if _, err = e.timbreInput(ctx, req, req.Body.Convert.ReferenceAssetID, dir, "reference.wav"); err != nil {
 			return empty, err
 		}
 		outputs = []string{"converted.wav"}
 		rate, channels = 22050, 1
-		args = append(args, "--source", filepath.Join(dir, "source.wav"), "--target", filepath.Join(dir, "reference.wav"), "--out", filepath.Join(dir, outputs[0]))
-	} else {
-		args = append(args, "--in", filepath.Join(dir, "source.wav"), "--outdir", dir)
+		job.Input.ReferencePath = filepath.Join(dir, "reference.wav")
 	}
+	session, err := e.newShimSession(ctx, "timbre", target, "", "")
+	if err != nil {
+		return empty, err
+	}
+	defer session.Close()
 	if emit != nil {
 		if err = emit(runtimejobs.Progress{Stage: runtimejobs.StageRunning}); err != nil {
 			return empty, err
 		}
 	}
-	p, err := e.supervisor.Start(ctx, r.Entry, runtimeprocess.Options{Args: args, MaxStdinBytes: 1, MaxStdoutBytes: 4 << 20, MaxStderrBytes: 4 << 20, BufferBytes: 4 << 20})
+	snap, err := session.client.SubmitJob(ctx, job)
 	if err != nil {
-		return empty, err
+		return empty, errors.New("center_timbre_failed")
 	}
-	defer p.Close()
-	_ = p.Stdin().Close()
-	var wg sync.WaitGroup
-	wg.Add(2)
-	for _, stream := range []io.Reader{p.Stdout(), p.Stderr()} {
-		go func(src io.Reader) { defer wg.Done(); _, _ = io.Copy(io.Discard, src) }(stream)
-	}
-	err = p.Wait()
-	wg.Wait()
+	snap, err = session.client.WaitJob(ctx, snap.ID)
 	if err != nil {
-		return empty, err
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = session.client.CancelJob(cancelCtx, snap.ID)
+		cancel()
+		return empty, ctx.Err()
+	}
+	if snap.State != componentprotocol.JobSucceeded {
+		return empty, errors.New("center_timbre_failed")
+	}
+	for _, name := range outputs {
+		data, err := session.client.DownloadArtifact(ctx, snap.ID, name, componentprotocol.MaxArtifactSize)
+		if err != nil {
+			return empty, runtimeassets.ErrInvalid
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+			return empty, err
+		}
 	}
 	return e.timbreOutputs(ctx, req, dir, outputs, rate, channels, input.DurationSeconds)
+}
+
+// timbreJobRequest keeps binding validation in the center and sends only typed
+// fields; the shim owns the fixed CLI template.
+func timbreJobRequest(r Resolved, convert bool, requestID string) (componentprotocol.JobRequest, error) {
+	job := componentprotocol.JobRequest{Protocol: componentprotocol.TimbreHTTPv1, RequestID: requestID, Models: map[string][]string{}}
+	groups := map[string][]string{}
+	seen := map[string]bool{}
+	for _, f := range r.Models {
+		if !filepath.IsAbs(f.Path) || seen[f.Path] {
+			return job, errTimbreBinding
+		}
+		seen[f.Path] = true
+		groups[f.ModelID] = append(groups[f.ModelID], f.Path)
+	}
+	device := r.Binding.Device
+	if device != "cpu" && device != "cuda" {
+		return job, errTimbreBinding
+	}
+	job.Options.Device = device
+	if convert {
+		if len(groups) != 4 || len(groups["campplus"]) != 1 {
+			return job, errTimbreBinding
+		}
+		seed := groups["seed-vc"]
+		if len(seed) != 2 {
+			return job, errTimbreBinding
+		}
+		var checkpoint, config string
+		for _, p := range seed {
+			switch strings.ToLower(filepath.Ext(p)) {
+			case ".yml", ".yaml":
+				config = p
+			case ".pth", ".pt":
+				checkpoint = p
+			default:
+				return job, errTimbreBinding
+			}
+		}
+		whisper, err := boundDirectory(groups["seed-whisper"], []string{"config.json", "preprocessor_config.json"}, []string{"model.safetensors", "pytorch_model.bin"})
+		if err != nil {
+			return job, err
+		}
+		big, err := boundDirectory(groups["bigvgan"], []string{"config.json", "bigvgan_generator.pt"}, nil)
+		if err != nil || checkpoint == "" || config == "" {
+			return job, errTimbreBinding
+		}
+		job.Kind = "seedvc"
+		job.Models["seed-vc"] = []string{checkpoint, config}
+		job.Models["seed-whisper"] = []string{whisper}
+		job.Models["campplus"] = []string{groups["campplus"][0]}
+		job.Models["bigvgan"] = []string{big}
+		job.Options.Steps = 25
+		job.Options.Pitch = 0
+		return job, nil
+	}
+	if len(groups) != 1 {
+		return job, errTimbreBinding
+	}
+	model, id := "htdemucs", "demucs"
+	signatures := []string{"955717e8"}
+	if len(groups["demucs-ft"]) != 0 {
+		model, id = "htdemucs_ft", "demucs-ft"
+		signatures = []string{"f7e0c4bc", "d12395a8", "92cfc3b6", "04573f0d"}
+	}
+	paths := groups[id]
+	if len(paths) != len(signatures) {
+		return job, errTimbreBinding
+	}
+	bag, err := timbreBagResource(r, model)
+	if err != nil {
+		return job, err
+	}
+	repo, format := "", ""
+	weights := map[string]string{}
+	for _, p := range paths {
+		if repo == "" {
+			repo = filepath.Dir(p)
+		}
+		if filepath.Dir(p) != repo {
+			return job, errTimbreBinding
+		}
+		base := filepath.Base(p)
+		ext := filepath.Ext(p)
+		sig := strings.TrimSuffix(base, ext)
+		current := "hf-safetensors"
+		if ext == ".th" {
+			current = "th"
+			sig = strings.SplitN(sig, "-", 2)[0]
+		} else if ext != ".safetensors" {
+			return job, errTimbreBinding
+		}
+		if format != "" && current != format || weights[sig] != "" {
+			return job, errTimbreBinding
+		}
+		format = current
+		weights[sig] = p
+	}
+	if bag == "" || len(weights) != len(signatures) {
+		return job, errTimbreBinding
+	}
+	job.Kind = "demucs"
+	job.Bag = bag
+	ordered := make([]string, 0, len(signatures))
+	for _, sig := range signatures {
+		if weights[sig] == "" {
+			return job, errTimbreBinding
+		}
+		ordered = append(ordered, weights[sig])
+	}
+	job.Models[id] = ordered
+	return job, nil
 }
 
 // Read properties before publication; the asset store then validates every WAV

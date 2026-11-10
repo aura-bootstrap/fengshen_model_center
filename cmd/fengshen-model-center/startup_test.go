@@ -9,8 +9,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/aura-bootstrap/fengshen_model_center/internal/componentprotocol"
 )
 
 func TestMetadataEntryProcess(t *testing.T) {
@@ -103,7 +106,7 @@ func TestHaarComponentInfoIsEmbeddedMetadataOnly(t *testing.T) {
 			if info.ComponentID != "haar-consumer" || !info.Embedded || len(info.Protocols) != 1 || info.Protocols[0] != "haar/v1" {
 				t.Fatalf("invalid embedded Haar metadata: %+v", info)
 			}
-		} else if info.ComponentID != "model-center" || info.Embedded || len(info.Protocols) != 0 {
+		} else if info.ComponentID != "model-center" || info.Embedded || strings.Join(info.Protocols, ",") != strings.Join([]string{componentprotocol.StreamWSv1, componentprotocol.BatchHTTPv1, componentprotocol.TimbreHTTPv1, componentprotocol.HaarHTTPv1}, ",") {
 			t.Fatalf("center metadata changed: %+v", info)
 		}
 	}
