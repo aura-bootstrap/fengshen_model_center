@@ -8,7 +8,10 @@ Set-StrictMode -Version Latest
 $entry = [IO.Path]::GetFullPath($PSScriptRoot)
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..')).TrimEnd('\','/')
 $build = [IO.Path]::GetFullPath($BuildDirectory).TrimEnd('\','/')
-if (-not [IO.Path]::IsPathRooted($BuildDirectory) -or $build.StartsWith($repo, [StringComparison]::OrdinalIgnoreCase) -or -not $build.StartsWith('W:\QoderCN', [StringComparison]::OrdinalIgnoreCase)) { throw 'Use a new absolute build directory under W:/QoderCN outside the repository' }
+$buildRoot = [IO.Path]::GetFullPath((Join-Path $repo 'build'))
+$insideBuild = $build.StartsWith($buildRoot + '\', [StringComparison]::OrdinalIgnoreCase)
+$legacy = $build.StartsWith('W:\QoderCN\', [StringComparison]::OrdinalIgnoreCase)
+if (-not [IO.Path]::IsPathRooted($BuildDirectory) -or (-not $insideBuild -and -not $legacy)) { throw 'Use a new absolute build directory under W:/QoderCN or <repo>/build' }
 if (Test-Path $build) { throw 'Build directory must not exist; no overwrite or mutable source reuse' }
 $lock = Get-Content -Raw (Join-Path $entry 'source-lock.json') | ConvertFrom-Json
 $selected = $lock.profiles.$Profile

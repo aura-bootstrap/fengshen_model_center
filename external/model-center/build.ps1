@@ -23,14 +23,17 @@ $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $module = $repo
 $Output = [IO.Path]::GetFullPath($Output)
+$buildRoot = [IO.Path]::GetFullPath((Join-Path $repo 'build'))
+$insideBuild = $Output.StartsWith($buildRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
 function RelativePath([string]$Base, [string]$Target) {
     $baseUri = [Uri]::new($Base.TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar)
     $targetUri = [Uri]::new($Target)
     return [Uri]::UnescapeDataString($baseUri.MakeRelativeUri($targetUri).ToString()).Replace('/', [IO.Path]::DirectorySeparatorChar)
 }
 $relative = RelativePath $repo $Output
-if (-not ($relative -eq '..' -or $relative.StartsWith('..' + [IO.Path]::DirectorySeparatorChar))) {
-    throw 'Build output must be outside the repository.'
+$outsideRepo = $relative -eq '..' -or $relative.StartsWith('..' + [IO.Path]::DirectorySeparatorChar)
+if (-not $outsideRepo -and -not $insideBuild) {
+    throw 'Build output must be outside the repository or under <repo>/build.'
 }
 if ($Version -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$') { throw 'Invalid component version.' }
 if ([bool]$Inputs -ne [bool]$InputLock) { throw 'Inputs and InputLock must be supplied together.' }
@@ -248,7 +251,7 @@ foreach ($id in @('whisper-batch','whisper-stream','llama-runtime')) {
     }
     $nativeBuild = Join-Path $Output ($id + '-native-build')
     if ($inputPath -notmatch '^[A-Za-z]:[\\/]' -or -not (Test-Path -LiteralPath $inputPath)) { throw 'Native offline input must be an existing absolute path.' }
-    if (-not $Output.StartsWith('W:\QoderCN', [StringComparison]::OrdinalIgnoreCase)) { throw 'Native builds require a new output under W:/QoderCN.' }
+    if (-not $insideBuild -and -not $Output.StartsWith('W:\QoderCN\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Native builds require a new output under W:/QoderCN or <repo>/build.' }
     Assert-Inputs
     $shell = (Get-Process -Id $PID).Path
     if ($id -eq 'whisper-batch') {

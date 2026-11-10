@@ -6,7 +6,10 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..')).TrimEnd('\','/')
 $build = [IO.Path]::GetFullPath($BuildDirectory).TrimEnd('\','/')
-if ($BuildDirectory -notmatch '^[Ww]:[\\/]' -or -not $build.StartsWith('W:\QoderCN\', [StringComparison]::OrdinalIgnoreCase) -or $build.StartsWith($repo + '\', [StringComparison]::OrdinalIgnoreCase) -or $build -eq $repo) { throw 'Use a new absolute W:/QoderCN build directory outside the repository' }
+$buildRoot = [IO.Path]::GetFullPath((Join-Path $repo 'build'))
+$insideBuild = $build.StartsWith($buildRoot + '\', [StringComparison]::OrdinalIgnoreCase)
+$legacy = $build.StartsWith('W:\QoderCN\', [StringComparison]::OrdinalIgnoreCase)
+if ($BuildDirectory -notmatch '^[Ww]:[\\/]' -or (-not $insideBuild -and -not $legacy)) { throw 'Use a new absolute build directory under W:/QoderCN or <repo>/build' }
 if (Test-Path -LiteralPath $build) { throw 'Build directory must not exist; no overwrite or source reuse' }
 if ($DependencyRoot -notmatch '^[A-Za-z]:[\\/]') { throw 'DependencyRoot must be absolute' }
 function Hash([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
