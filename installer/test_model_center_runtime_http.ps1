@@ -95,7 +95,7 @@ try {
     & (Join-Path $PSScriptRoot 'build_model_center.ps1') @build
     $go = (Get-Command go -CommandType Application | Select-Object -First 1).Source
     $driver = Join-Path $out 'runtime-http-driver.exe'
-    Native $go @('-C', $module, 'test', '-c', '-o', $driver, '.')
+    Native $go @('-C', $module, 'test', '-c', '-o', $driver, './cmd/fengshen-model-center')
     $center = Join-Path $out 'model-center\fengshen-model-center.exe'
     $delivery = Join-Path $out 'model-center\delivery.json'
     $centerSHA = (Get-FileHash -LiteralPath $center -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -104,7 +104,7 @@ try {
     $doc = @{ schema = 1; engines = @(@{ inputpath = 'runtime-http-driver.exe'; edition = 'developer'; management = $true }) }
     [IO.File]::WriteAllText($template, (ConvertTo-Json -InputObject $doc -Depth 8), [Text.UTF8Encoding]::new($false))
     # Use the production trust builder; never synthesize engine trust digests.
-    Native $go @('-C', $module, 'run', './build', '-mode', 'engine-trust', '-root', $out, '-template', $template, '-center-sha256', $centerSHA, '-delivery-sha256', $deliverySHA)
+    Native $go @('-C', $module, 'run', './cmd/build', '-mode', 'engine-trust', '-root', $out, '-template', $template, '-center-sha256', $centerSHA, '-delivery-sha256', $deliverySHA)
     $env:FENGSHEN_CENTER_RUNTIME_HTTP_ROOT = $out
     $env:FENGSHEN_CENTER_RUNTIME_HTTP_REPO = $repo
     $env:FENGSHEN_CENTER_RUNTIME_HTTP_FACE_JPEG = $FaceJpeg

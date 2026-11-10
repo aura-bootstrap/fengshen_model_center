@@ -74,19 +74,19 @@ $env:GOFLAGS = '-mod=readonly'
 $env:PATH = (Split-Path $go) + [IO.Path]::PathSeparator + $env:PATH
 # Resolve Go's complete dependency/embed/test graph, local replaces and compiler
 # inputs; also pin this script and the frozen entry. No mutable venv is trusted.
-$snapshotArgs = @('-C', $module, 'run', './build', '-mode', 'snapshot', '-root', $repo, '-output', $Output)
+$snapshotArgs = @('-C', $module, 'run', './cmd/build', '-mode', 'snapshot', '-root', $repo, '-output', $Output)
 if ($BuildEngines) { $snapshotArgs += '-engines' }
 Run $go $snapshotArgs
 $inputLockSHA = if ($InputLock) { (Get-FileHash -LiteralPath $InputLock -Algorithm SHA256).Hash } else { '' }
 function Assert-Inputs {
     # Resolve the input set again as well as checking each identity/hash: newly
     # added Go/embed/module inputs must not silently escape the original lock.
-    $verifyArgs = @('-C', $module, 'run', './build', '-mode', 'verify-snapshot', '-root', $repo, '-output', $Output)
+    $verifyArgs = @('-C', $module, 'run', './cmd/build', '-mode', 'verify-snapshot', '-root', $repo, '-output', $Output)
     if ($BuildEngines) { $verifyArgs += '-engines' }
     Run $go $verifyArgs
     if ($Inputs -and $InputLock) {
         if ((Get-FileHash -LiteralPath $InputLock -Algorithm SHA256).Hash -cne $inputLockSHA) { throw 'External input lock changed.' }
-        Run $go @('-C', $module, 'run', './build', '-mode', 'verify-lock', '-root', $Inputs, '-template', $InputLock)
+        Run $go @('-C', $module, 'run', './cmd/build', '-mode', 'verify-lock', '-root', $Inputs, '-template', $InputLock)
         # verify-lock hashes every listed file; also reject any unlisted file on EVERY check.
         $currentLock = Get-Content -LiteralPath $InputLock -Raw | ConvertFrom-Json
         $lockedPaths = @($currentLock.inputs | ForEach-Object { $_.path.ToLowerInvariant() })
@@ -105,7 +105,7 @@ $results = @()
 function Manifest([string]$Id, [string]$Directory, [string]$Entry, [string]$Packaging, $BuildInputs, [string[]]$ModelRefs = @(), [string]$StartupReportRef = 'startup-report.json', [string[]]$Protocols = @()) {
     $template = Join-Path $Output ($Id + '.template.json')
     JsonFile $template @{schema=1; component_id=$Id; version=$Version; os='windows'; arch='amd64'; entry_type='executable'; entry=$Entry; packaging=$Packaging; protocols=$Protocols; files=@(); runtime_dependencies=@(); model_refs=$ModelRefs; driver_requirements=@(); build_inputs=$BuildInputs; startup_report_ref=$StartupReportRef}
-    Run $go @('-C', $module, 'run', './build', '-mode', 'manifest', '-root', $Directory, '-template', $template)
+    Run $go @('-C', $module, 'run', './cmd/build', '-mode', 'manifest', '-root', $Directory, '-template', $template)
 }
 $goTarget = (& $go env GOOS GOARCH)
 if (($goTarget -join '/') -ne 'windows/amd64') { throw 'This script currently verifies only windows/amd64 builds.' }
@@ -138,7 +138,7 @@ function Metadata-Smoke([string]$Id, [string]$Directory, [string]$Entry, [string
 $centerDir = Join-Path $Output ('model-center\components\model-center\' + $Version)
 New-Item -ItemType Directory -Path $centerDir -Force | Out-Null
 Assert-Inputs
-Run $go @('-C', $module, 'build', '-trimpath', '-buildvcs=false', '-ldflags', "-X main.buildVersion=$Version", '-o', (Join-Path $centerDir 'fengshen-model-center.exe'), '.')
+Run $go @('-C', $module, 'build', '-trimpath', '-buildvcs=false', '-ldflags', "-X main.buildVersion=$Version", '-o', (Join-Path $centerDir 'fengshen-model-center.exe'), './cmd/fengshen-model-center')
 $centerBuildInputs = @(@{name='Go'; version=$goVersion; sha256=(Get-FileHash $go -Algorithm SHA256).Hash.ToLower(); license='BSD-3-Clause'})
 Metadata-Smoke 'model-center' $centerDir 'fengshen-model-center.exe' 'go' -BuildInputs $centerBuildInputs
 Copy-Item (Join-Path $centerDir 'fengshen-model-center.exe') (Join-Path $Output 'model-center\fengshen-model-center.exe')
@@ -146,7 +146,7 @@ $results += @{component_id='model-center'; build='built'; startup_test='passed';
 $lockData = $null
 if ($Inputs -and $InputLock) {
     $Inputs = [IO.Path]::GetFullPath($Inputs)
-    Run $go @('-C', $module, 'run', './build', '-mode', 'verify-lock', '-root', $Inputs, '-template', $InputLock)
+    Run $go @('-C', $module, 'run', './cmd/build', '-mode', 'verify-lock', '-root', $Inputs, '-template', $InputLock)
     $lockData = Get-Content -LiteralPath $InputLock -Raw | ConvertFrom-Json
     # Ensure no unpinned input is supplied to a freezer, including Python DLLs.
     $actual = @(Get-ChildItem $Inputs -Recurse -File)
@@ -282,7 +282,7 @@ $results += @{component_id='haar-consumer'; build='built'; startup_test='passed'
 Assert-Inputs
 JsonFile (Join-Path $Output 'build-results.json') $results
 JsonFile (Join-Path $Output 'resource-layout.json') @{schema=1; center='model-center/fengshen-model-center.exe'; components='model-center/components'; root_kind='installed'; model_roots=@(); haar_files=@()}
-Run $go @('-C', $module, 'run', './build', '-mode', 'delivery', '-root', $Output)
+Run $go @('-C', $module, 'run', './cmd/build', '-mode', 'delivery', '-root', $Output)
 $exe = Join-Path $Output 'model-center\fengshen-model-center.exe'
 $manifest = Join-Path $centerDir 'manifest.json'
 $centerSHA = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
@@ -312,7 +312,7 @@ if ($BuildEngines) {
         Run $go @('-C', $backend, 'vet', './cmd/fengshen-engine')
         Run $go @('-C', $backend, 'build', '-trimpath', '-buildvcs=false', '-ldflags', $flags, '-o', (Join-Path $engineRoot 'fengshen-engine.exe'), './cmd/fengshen-engine')
         Assert-Inputs
-        Run $go @('-C', $module, 'run', './build', '-mode', 'delivery', '-root', $engineRoot)
+        Run $go @('-C', $module, 'run', './cmd/build', '-mode', 'delivery', '-root', $engineRoot)
         $copiedSHA = (Get-FileHash (Join-Path $engineRoot 'model-center\delivery.json') -Algorithm SHA256).Hash.ToLower()
         if ($copiedSHA -cne $deliverySHA) { throw 'Copied engine resource delivery digest mismatch.' }
         $engineResults += @{edition=$edition; build='built'; test='passed'; vet='passed'; executable_sha256=(Get-FileHash (Join-Path $engineRoot 'fengshen-engine.exe') -Algorithm SHA256).Hash.ToLower(); center_sha256=$centerSHA; delivery_sha256=$deliverySHA; ldflags=$flags; startup_test='not_tested'; inference='not_tested'}
@@ -327,7 +327,7 @@ if ($BuildEngines) {
         $trustEdition = if ($edition -eq 'dev') { 'developer' } else { $edition }
         $trustTemplate = Join-Path $Output ($edition + '-engine-trust.template.json')
         JsonFile $trustTemplate @{schema=1; engines=@(@{inputpath='fengshen-engine.exe'; edition=$trustEdition; management=($edition -ne 'user')})}
-        Run $go @('-C', $module, 'run', './build', '-mode', 'engine-trust', '-root', $engineRoot, '-template', $trustTemplate, '-center-sha256', $centerSHA, '-delivery-sha256', $deliverySHA)
+        Run $go @('-C', $module, 'run', './cmd/build', '-mode', 'engine-trust', '-root', $engineRoot, '-template', $trustTemplate, '-center-sha256', $centerSHA, '-delivery-sha256', $deliverySHA)
         $trustResults += @{edition=$edition; build='built'; path='model-center/engine-trust.json'; sha256=(Get-FileHash (Join-Path $engineRoot 'model-center\engine-trust.json') -Algorithm SHA256).Hash.ToLower(); center_sha256=$centerSHA; delivery_sha256=$deliverySHA; inference='not_tested'}
         JsonFile (Join-Path $Output 'engine-trust-build-results.json') $trustResults
     }

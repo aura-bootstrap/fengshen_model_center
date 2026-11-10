@@ -36,7 +36,7 @@ jobs:
         with:
           node-version: 22
       - name: node tests
-        run: node --test web/app.test.cjs web/evidence.test.cjs
+        run: node --test cmd/fengshen-model-center/web/app.test.cjs cmd/fengshen-model-center/web/evidence.test.cjs
 
   guard:
     runs-on: windows-latest

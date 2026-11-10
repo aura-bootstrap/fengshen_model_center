@@ -13,28 +13,29 @@
 
 ```text
 .
-├─ *.go                  # 中心主程序（package main）
-├─ bindings/             # 权重绑定与事务
-├─ build/                # manifest/delivery/engine-trust/verify-lock 生成器
-├─ components/           # 组件清单、证据与启动报告
-├─ highlightclient/      # 高光评分/转写/媒体 HTTP 客户端
-├─ integration/          # 三端只读集成（会话、快照、健康）
-├─ mediaclient/
-├─ registry/             # 外置路径登记存储
-├─ runtimeadapter/       # Whisper/Demucs/Seed-VC/llama/人脸运行适配
-├─ runtimeassets/        # 运行时资产分块存储
-├─ runtimehttp/          # 运行时上传/下载 HTTP
-├─ runtimejobs/          # 运行时任务与配额
-├─ runtimeprocess/       # 受控子进程
-├─ safefs/               # Windows 安全文件系统边界
-├─ internal/upstream/    # 复制自 generation_server 的依赖闭包（非测试源码）
-├─ web/                  # 内嵌管理界面与 Node 测试
-├─ assets/haar/          # OpenCV Haar 正/侧脸模型
-├─ components-src/       # llama-runtime / whisper-batch / whisper-stream 原生源码
-├─ installer/            # PowerShell 构建/测试脚本
-├─ sidecar/              # 冻结 runner；权重与 venv 不入库
-├─ docs/specs/           # 迁移前的需求/设计/任务文档
-├─ models/               # 开发态默认扫描根（空）
+├─ cmd/
+│  ├─ fengshen-model-center/    # 中心主程序（package main）与内嵌 web/
+│  └─ build/                    # manifest/delivery/engine-trust/verify-lock 生成器
+├─ internal/
+│  ├─ bindings/                 # 权重绑定与事务
+│  ├─ components/               # 组件清单、证据与启动报告
+│  ├─ highlightclient/          # 高光评分/转写/媒体 HTTP 客户端
+│  ├─ integration/              # 三端只读集成（会话、快照、健康）
+│  ├─ mediaclient/
+│  ├─ registry/                 # 外置路径登记存储
+│  ├─ runtimeadapter/           # Whisper/Demucs/Seed-VC/llama/人脸运行适配
+│  ├─ runtimeassets/            # 运行时资产分块存储
+│  ├─ runtimehttp/              # 运行时上传/下载 HTTP
+│  ├─ runtimejobs/              # 运行时任务与配额
+│  ├─ runtimeprocess/           # 受控子进程
+│  ├─ safefs/                   # Windows 安全文件系统边界
+│  └─ upstream/                 # 复制自 generation_server 的依赖闭包（非测试源码）
+├─ assets/haar/                 # OpenCV Haar 正/侧脸模型
+├─ components-src/              # llama-runtime / whisper-batch / whisper-stream 原生源码
+├─ installer/                   # PowerShell 构建/测试脚本
+├─ sidecar/                     # 冻结 runner；权重与 venv 不入库
+├─ docs/specs/                  # 迁移前的需求/设计/任务文档
+├─ models/                      # 开发态默认扫描根（空）
 └─ .github/workflows/ci.yml
 ```
 
@@ -43,7 +44,13 @@
 要求：Windows x64、Go 1.25+（`go.mod` 已固定语言版本），无需任何第三方 Go 模块。
 
 ```powershell
-go build -o fengshen-model-center.exe .
+go build -o fengshen-model-center.exe ./cmd/fengshen-model-center
+```
+
+构建工具（清单/交付/信任）：
+
+```powershell
+go run ./cmd/build -mode manifest -root <目录> -template <模板>
 ```
 
 ## 运行
@@ -71,7 +78,7 @@ go build -o fengshen-model-center.exe .
 ```powershell
 go vet ./...
 go test ./...
-node --test web/app.test.cjs web/evidence.test.cjs
+node --test cmd/fengshen-model-center/web/app.test.cjs cmd/fengshen-model-center/web/evidence.test.cjs
 ```
 
 CI 在 `windows-latest` 运行以上三类检查，并附加仓库守卫：Go 源码禁止 `fengshen-slicer` 导入、禁止权重/二进制扩展名、禁止大于 100 MiB 的文件。
