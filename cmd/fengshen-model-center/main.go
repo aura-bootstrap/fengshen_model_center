@@ -63,6 +63,26 @@ func main() {
 	}
 }
 
+// weightHubRoot returns the optional development weight store. The environment
+// variable overrides the machine-local default; only an existing directory is
+// accepted so other installations are unaffected.
+func weightHubRoot() string {
+	if configured := os.Getenv("FENGSHEN_MODEL_WEIGHT_HUB"); configured != "" {
+		if !filepath.IsAbs(configured) {
+			return ""
+		}
+		if info, err := os.Stat(configured); err == nil && info.IsDir() {
+			return filepath.Clean(configured)
+		}
+		return ""
+	}
+	const machineDefault = `W:\model_weght_hub`
+	if info, err := os.Stat(machineDefault); err == nil && info.IsDir() {
+		return machineDefault
+	}
+	return ""
+}
+
 func run(listen, root, rootKind, data, integrationData, installRoot, centerSHA, deliverySHA string) error {
 	if err := validateListen(listen); err != nil {
 		return err
@@ -84,8 +104,13 @@ func run(listen, root, rootKind, data, integrationData, installRoot, centerSHA, 
 		for _, rel := range layout.ModelRoots {
 			roots = append(roots, filepath.Join(resolved, filepath.FromSlash(rel)))
 		}
-	} else if home, err := os.UserHomeDir(); err == nil {
-		roots = append(roots, filepath.Join(home, ".cache", "torch", "hub", "checkpoints"))
+	} else {
+		if home, err := os.UserHomeDir(); err == nil {
+			roots = append(roots, filepath.Join(home, ".cache", "torch", "hub", "checkpoints"))
+		}
+		if hub := weightHubRoot(); hub != "" {
+			roots = append(roots, hub)
+		}
 	}
 	if installRoot == "" {
 		installRoot = resolved

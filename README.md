@@ -78,7 +78,7 @@ go run ./cmd/build -mode manifest -root <目录> -template <模板>
 | `--install-root`、`--center-sha256`、`--delivery-sha256` | 安装态可信启动参数 |
 | `--component-info`、`--haar-component-info` | 仅输出元数据，不扫描、不加载模型 |
 
-开发态默认扫描根：`sidecar/seed-vc/checkpoints`、`models`、`~/.cache/torch/hub/checkpoints`。权重不入库，按需通过界面登记外置路径。
+开发态默认扫描根：`sidecar/seed-vc/checkpoints`、`models`、`~/.cache/torch/hub/checkpoints`，以及本机权重库 `W:\model_weght_hub`（目录存在时自动加入；可用 `FENGSHEN_MODEL_WEIGHT_HUB` 覆盖）。权重不入库，也可通过界面登记外置路径。
 
 ## 内部通信与隔离（HTTP/WS）
 
