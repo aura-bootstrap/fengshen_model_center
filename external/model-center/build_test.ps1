@@ -1,6 +1,7 @@
 ﻿# Offline contract checks; does not invoke make_all or create build products.
 $ErrorActionPreference = 'Stop'
-$scriptPath = Join-Path $PSScriptRoot 'build_model_center.ps1'
+$repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+$scriptPath = Join-Path $PSScriptRoot 'build.ps1'
 $tokens=$null; $errors=$null
 $ast = [Management.Automation.Language.Parser]::ParseFile($scriptPath,[ref]$tokens,[ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
@@ -47,19 +48,19 @@ if ($gates.Count -ne 3) { throw 'Expected explicit engine input and engine build
 # Parse/source contracts only: never dot-source the build or execute third-party tools.
 if (-not @($ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'BuildWhisperBatch' -and $_.StaticType -eq [switch] }).Count) { throw 'Missing explicit Whisper switch.' }
 if (-not $source.Contains('[string]$BuildWhisperBatchDependencyRoot')) { throw 'Missing fresh native batch dependency parameter.' }
-foreach ($required in @('build_whisper_batch.ps1', '$BuildWhisperBatchDependencyRoot', '4979e04-batch-v2', 'Removed the private stock whisper-cli build')) {
+foreach ($required in @('external\whisper\batch\build.ps1', '$BuildWhisperBatchDependencyRoot', '4979e04-batch-v2', 'Removed the private stock whisper-cli build')) {
     if (-not $source.Contains($required)) { throw "Missing batch integration: $required" }
 }
 if ($source.Contains("--target','whisper-cli")) { throw 'Stock CLI must not deliver a runtime component.' }
 $functions = @{}
 foreach ($f in $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]},$true)) { $functions[$f.Name] = $f.Body.Extent.Text }
-foreach ($required in @('[switch]$BuildWhisperStream','[switch]$BuildLlamaRuntime','build_whisper_stream.ps1','build_llama_runtime.ps1',"Move-Item -LiteralPath `$from -Destination `$destination",'Shared facehaar is embedded','same-byte center copy')) {
+foreach ($required in @('[switch]$BuildWhisperStream','[switch]$BuildLlamaRuntime','external\whisper\stream\build.ps1','external\llama\runtime\build.ps1',"Move-Item -LiteralPath `$from -Destination `$destination",'Shared facehaar is embedded','same-byte center copy')) {
     if (-not $source.Contains($required)) { throw "Missing native/embedded integration gate: $required" }
 }
 foreach ($required in @("[ValidateSet('baseline','avx2')][string]`$LlamaProfile = 'baseline'", "'-Profile',`$LlamaProfile", '$nativeLock.profiles.$LlamaProfile.version')) {
     if (-not $source.Contains($required)) { throw "Missing explicit llama profile integration: $required" }
 }
-$batchPath = Join-Path $PSScriptRoot 'build_whisper_batch.ps1'
+$batchPath = Join-Path $repo 'external/whisper/batch/build.ps1'
 $batchTokens=$null; $batchErrors=$null
 $null = [Management.Automation.Language.Parser]::ParseFile($batchPath,[ref]$batchTokens,[ref]$batchErrors)
 if ($batchErrors.Count) { throw ($batchErrors | Out-String) }
@@ -68,7 +69,7 @@ foreach ($required in @('Build directory must not exist', 'whisper\stream\main.c
     if (-not $batch.Contains($required)) { throw "Missing strict batch builder contract: $required" }
 }
 if ($batch.Contains("vad_supported=`$false") -or $batch.Contains("model_refs=@('whisper-asr')") -or $batch.Contains("@('--metadata')")) { throw 'Batch must declare native VAD without using the stream metadata entry.' }
-$streamPath = Join-Path $PSScriptRoot 'build_whisper_stream.ps1'
+$streamPath = Join-Path $repo 'external/whisper/stream/build.ps1'
 $streamTokens=$null; $streamErrors=$null
 $streamAst = [Management.Automation.Language.Parser]::ParseFile($streamPath,[ref]$streamTokens,[ref]$streamErrors)
 if ($streamErrors.Count) { throw ($streamErrors | Out-String) }
@@ -121,7 +122,7 @@ try {
     New-Item -ItemType Directory -Path $Output -Force | Out-Null
     $Version = 'contract-test'
     $go = 'contract-only-no-executable'
-    $module = Join-Path $PSScriptRoot '..'
+    $module = $repo
     function Run([string]$Program, [string[]]$Arguments) {
         if ($Arguments -notcontains 'manifest') { throw 'Contract test attempted a non-manifest build command.' }
     }
@@ -144,4 +145,4 @@ try {
 } finally {
     if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force }
 }
-Write-Output 'build_model_center installer contracts and isolated validation tests passed.'
+Write-Output 'model-center build contracts and isolated validation tests passed.'

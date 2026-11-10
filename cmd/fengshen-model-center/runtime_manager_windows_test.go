@@ -37,7 +37,7 @@ func TestRuntimeHaarRequiresCurrentExecutableBytes(t *testing.T) {
 		t.Run(strconv.FormatBool(same), func(t *testing.T) {
 			m := fixtureManager(t)
 			for _, name := range []string{"haarcascade_frontalface_default.xml", "haarcascade_profileface.xml"} {
-				put(t, filepath.Join(m.root, "assets", "haar", name), "XML fixture; never loaded")
+				put(t, filepath.Join(m.root, "external", "haar", name), "XML fixture; never loaded")
 			}
 			dir := components.ComponentDirectory(m.componentRoot, "haar-consumer", "1")
 			body := append([]byte(nil), current...)
@@ -152,7 +152,7 @@ func newRuntimeBindingFixture(t *testing.T) runtimeBindingFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowFixtureRoots(m, filepath.Join(project, "models"), filepath.Join(project, "assets", "haar"))
+	allowFixtureRoots(m, filepath.Join(project, "models"), filepath.Join(project, "external", "haar"))
 	t.Cleanup(func() { m.Close() })
 	fixture := runtimeBindingFixture{manager: m, install: install, dir: components.ComponentDirectory(m.componentRoot, "whisper-batch", "1"), model: filepath.Join(project, "models", "group", "ggml-small.bin")}
 	put(t, fixture.model, "model fixture; never loaded")
@@ -631,7 +631,7 @@ func TestRuntimeComponentsUseInstallRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowFixtureRoots(m, filepath.Join(project, "models"), filepath.Join(project, "assets", "haar"))
+	allowFixtureRoots(m, filepath.Join(project, "models"), filepath.Join(project, "external", "haar"))
 	defer m.Close()
 	want := filepath.Join(install, "model-center", "components")
 	if m.componentRoot != want || m.root != project {

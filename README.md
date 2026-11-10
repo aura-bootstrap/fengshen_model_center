@@ -18,12 +18,13 @@
 │  ├─ fengshen-model-center/    # 中心主程序（package main，无 Web 界面）
 │  ├─ fengshen-shim/            # 执行器适配进程（whisper-stream/whisper-batch/timbre/haar/llama）
 │  └─ build/                    # manifest/delivery/engine-trust/verify-lock 生成器
-├─ assets/                      # 非 Go 代码与资源（模型权重不在此仓库）
+├─ external/                    # 非 Go 代码与资源（模型权重不在此仓库）
+│  ├─ model-center/             # 中心构建、契约测试与运行时 HTTP 脚本
 │  ├─ whisper/
-│  │  ├─ batch/                 # whisper-batch 原生源码、CMake 与回归测试
-│  │  └─ stream/                # whisper-stream 原生源码、CMake 与协议/VAD 测试
+│  │  ├─ batch/                 # 原生源码、CMake、回归测试与 build.ps1
+│  │  └─ stream/                # 原生源码、CMake、协议/VAD 测试与 build.ps1
 │  ├─ llama/
-│  │  └─ runtime/               # llama-runtime 原生源码、CMake 与锁文件
+│  │  └─ runtime/               # 原生源码、CMake、锁文件与 build.ps1
 │  └─ timbre/                   # Demucs/Seed-VC 冻结 runner 与测试
 ├─ internal/
 │  ├─ bindings/                 # 权重绑定与事务
@@ -42,11 +43,10 @@
 │  ├─ safefs/                   # Windows 安全文件系统边界
 │  ├─ shim/                     # shim 的 HTTP/WS 服务与旧协议桥
 │  └─ upstream/                 # 复制自 generation_server 的依赖闭包（非测试源码）
-├─ installer/                   # PowerShell 构建/测试脚本
 └─ .github/workflows/ci.yml
 ```
 
-`assets/` 按场景存放不属于 Go 业务代码、也不在模型权重库中的构建输入与资源。模型权重仍只由 `%USERPROFILE%\.fengshen\model_manifest.json` 指向。
+`external/` 按场景存放不属于 Go 业务代码、也不在模型权重库中的构建输入与资源。模型权重仍只由 `%USERPROFILE%\.fengshen\model_manifest.json` 指向。
 
 ## 构建
 
@@ -110,12 +110,12 @@ CI 在 `windows-latest` 运行以上检查，并附加仓库守卫：Go 源码�
 
 ## 组件构建（可选，需本地工具链）
 
-`installer/` 下的脚本用于生成受控组件与交付清单，源码与资源取自 `assets/`，要求 MSVC x64、CMake、Ninja 及锁定的上游归档：
+`external/` 下的脚本用于生成受控组件与交付清单，要求 MSVC x64、CMake、Ninja 及锁定的上游归档：
 
-- `build_model_center.ps1`：构建中心与 `fengshen-shim.exe`、生成清单/交付、可选冻结 Demucs/Seed-VC、可选构建原生组件
-- `build_whisper_batch.ps1`、`build_whisper_stream.ps1`、`build_llama_runtime.ps1`：原生组件
-- `build_model_center_test.ps1`：本地回归
-- `test_model_center_runtime_http.ps1`：运行时 HTTP 测试
+- `external/model-center/build.ps1`：构建中心与 `fengshen-shim.exe`、生成清单/交付、可选冻结 Demucs/Seed-VC、可选构建原生组件
+- `external/whisper/batch/build.ps1`、`external/whisper/stream/build.ps1`、`external/llama/runtime/build.ps1`：原生组件
+- `external/model-center/build_test.ps1`：本地回归
+- `external/model-center/test_runtime_http.ps1`：运行时 HTTP 测试
 
 这些脚本默认把产物写到仓库外的全新目录，不随仓库提交。
 

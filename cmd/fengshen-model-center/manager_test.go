@@ -18,7 +18,7 @@ import (
 func fixtureManager(t *testing.T) *Manager {
 	t.Helper()
 	root := t.TempDir()
-	for _, p := range []string{"sidecar", "models", filepath.Join("assets", "haar")} {
+	for _, p := range []string{"sidecar", "models", filepath.Join("external", "haar")} {
 		if err := os.MkdirAll(filepath.Join(root, p), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -27,7 +27,7 @@ func fixtureManager(t *testing.T) *Manager {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowFixtureRoots(m, filepath.Join(root, "models"), filepath.Join(root, "assets", "haar"))
+	allowFixtureRoots(m, filepath.Join(root, "models"), filepath.Join(root, "external", "haar"))
 	t.Cleanup(func() { m.Close() })
 	return m
 }

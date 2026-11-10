@@ -16,7 +16,7 @@ import (
 
 // Include the complete non-Go asset tree, so added inputs also invalidate locks.
 func nativeResourceInputs(repo string, add func(string) error) error {
-	return filepath.WalkDir(filepath.Join(repo, "assets"), func(p string, d os.DirEntry, err error) error {
+	return filepath.WalkDir(filepath.Join(repo, "external"), func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -137,7 +137,7 @@ func snapshot(ctx context.Context, repo, output string, engines, check bool) err
 			return e
 		}
 	}
-	for _, rel := range []string{"installer/build_model_center.ps1", "installer/build_whisper_stream.ps1", "installer/build_whisper_batch.ps1", "installer/build_llama_runtime.ps1", "assets/timbre/model_center_frozen_runner.py"} {
+	for _, rel := range []string{"external/model-center/build.ps1", "external/whisper/stream/build.ps1", "external/whisper/batch/build.ps1", "external/llama/runtime/build.ps1", "external/timbre/model_center_frozen_runner.py"} {
 		if err = add(filepath.Join(repo, rel)); err != nil {
 			return err
 		}

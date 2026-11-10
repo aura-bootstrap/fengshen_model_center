@@ -23,7 +23,7 @@ if (-not $Run) {
     return
 }
 if ($env:OS -ne 'Windows_NT') { throw 'Windows is required.' }
-$repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $module = $repo
 function ExistingAbsolute([string]$Path, [bool]$Directory) {
     if (-not $Path -or -not [IO.Path]::IsPathRooted($Path)) { throw 'Explicit absolute existing input required; no helper/download fallback.' }
@@ -92,7 +92,7 @@ try {
         $build.BuildWhisperStream = $true
         $build.WhisperStreamDependencyRoot = $WhisperStreamDependencyRoot
     }
-    & (Join-Path $PSScriptRoot 'build_model_center.ps1') @build
+    & (Join-Path $PSScriptRoot 'build.ps1') @build
     $go = (Get-Command go -CommandType Application | Select-Object -First 1).Source
     $driver = Join-Path $out 'runtime-http-driver.exe'
     Native $go @('-C', $module, 'test', '-c', '-o', $driver, './cmd/fengshen-model-center')

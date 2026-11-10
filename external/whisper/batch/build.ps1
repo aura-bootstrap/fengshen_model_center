@@ -1,10 +1,10 @@
-param(
+﻿param(
     [Parameter(Mandatory=$true)][string]$DependencyRoot,
     [Parameter(Mandatory=$true)][string]$BuildDirectory
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-$repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\','/')
+$repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..')).TrimEnd('\','/')
 $build = [IO.Path]::GetFullPath($BuildDirectory).TrimEnd('\','/')
 if ($BuildDirectory -notmatch '^[Ww]:[\\/]' -or -not $build.StartsWith('W:\QoderCN\', [StringComparison]::OrdinalIgnoreCase) -or $build.StartsWith($repo + '\', [StringComparison]::OrdinalIgnoreCase) -or $build -eq $repo) { throw 'Use a new absolute W:/QoderCN build directory outside the repository' }
 if (Test-Path -LiteralPath $build) { throw 'Build directory must not exist; no overwrite or source reuse' }
@@ -21,7 +21,7 @@ function Native([string]$Program, [string[]]$Arguments, [string]$Log) {
     return $lines
 }
 $sourceCommit = '4979e04f5dcaccb36057e059bbaed8a2f5288315'
-$version = '4979e04-stream-v1'
+$version = '4979e04-batch-v2'
 $archive = Join-Path $DependencyRoot 'whisper.tar.gz'
 $json = Join-Path $DependencyRoot 'json.hpp'
 $jsonLicense = Join-Path $DependencyRoot 'json-LICENSE.MIT'
@@ -43,24 +43,24 @@ Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
 Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
 $cmake = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
 $ninja = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe'
-$entry = [IO.Path]::GetFullPath((Join-Path $repo 'assets\whisper\stream'))
+$ctest = Join-Path (Split-Path $cmake) 'ctest.exe'
+$entry = $PSScriptRoot
 $obj = Join-Path $build 'obj'
 $inputs = @()
-foreach ($p in @($archive, $json, $jsonLicense, (Join-Path $source 'LICENSE'), (Join-Path $entry 'main.cpp'), (Join-Path $entry 'CMakeLists.txt'), (Join-Path $entry 'vad_test.cpp'), (Join-Path $entry 'utf8_test.cpp'), $PSCommandPath, $cmake, $ninja, $tar, (Get-Command cl.exe).Source, (Get-Command link.exe).Source, (Get-Command dumpbin.exe).Source)) {
+foreach ($p in @($archive, $json, $jsonLicense, (Join-Path $source 'LICENSE'), (Join-Path $entry 'main.cpp'), (Join-Path $entry 'CMakeLists.txt'), (Join-Path $entry 'batch_test.cpp'), (Join-Path $repo 'external\whisper\stream\main.cpp'), $PSCommandPath, $cmake, $ctest, $ninja, $tar, (Get-Command cl.exe).Source, (Get-Command link.exe).Source, (Get-Command dumpbin.exe).Source)) {
     $inputs += [ordered]@{name=$p; version=$sourceCommit; sha256=(Hash $p); license=$(if ($p.StartsWith($vs, [StringComparison]::OrdinalIgnoreCase) -or $p -eq $tar) { 'Microsoft-toolchain-build-only' } else { 'MIT/project-source' })}
 }
-$null = Native $cmake @('-S', $entry, '-B', $obj, '-G', 'Ninja', "-DCMAKE_MAKE_PROGRAM=$ninja", '-DCMAKE_BUILD_TYPE=Release', "-DWHISPER_SOURCE_DIR=$source", "-DJSON_HEADER=$json", '-DFETCHCONTENT_FULLY_DISCONNECTED=ON', '-DFETCHCONTENT_UPDATES_DISCONNECTED=ON', '-DGGML_BACKEND_DL=OFF', '-DGGML_RPC=OFF', '-DWHISPER_CURL=OFF') (Join-Path $build 'configure.log')
-$null = Native $cmake @('--build', $obj, '--target', 'whisper-stream', 'whisper-stream-vad-test', 'whisper-stream-utf8-test', '-j', '4') (Join-Path $build 'compile.log')
-$ctest = Join-Path (Split-Path $cmake) 'ctest.exe'
+$null = Native $cmake @('-S', $entry, '-B', $obj, '-G', 'Ninja', "-DCMAKE_MAKE_PROGRAM=$ninja", '-DCMAKE_BUILD_TYPE=Release', "-DWHISPER_SOURCE_DIR=$source", "-DJSON_HEADER=$json") (Join-Path $build 'configure.log')
+$null = Native $cmake @('--build', $obj, '--target', 'whisper-batch', 'whisper-batch-test', '-j', '4') (Join-Path $build 'compile.log')
 $null = Native $ctest @('--test-dir', $obj, '--output-on-failure', '-V') (Join-Path $build 'regression.log')
-JsonFile @{command=@($ctest, '--test-dir', $obj, '--output-on-failure', '-V'); exit_code=0; model_load=$false; tests=@('whisper-stream-vad','whisper-stream-utf8')} (Join-Path $build 'regression-evidence.json')
+JsonFile @{command=@($ctest, '--test-dir', $obj, '--output-on-failure', '-V'); exit_code=0; model_load=$false; tests=@('whisper-batch-contract')} (Join-Path $build 'regression-evidence.json')
 foreach ($input in $inputs) { if ((Hash $input.name) -cne $input.sha256) { throw "Build input changed: $($input.name)" } }
-$delivery = Join-Path $build ('components\whisper-stream\' + $version)
+$delivery = Join-Path $build ('components\whisper-batch\' + $version)
 New-Item -ItemType Directory -Path $delivery -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $obj 'whisper-stream.exe') -Destination $delivery
+Copy-Item -LiteralPath (Join-Path $obj 'whisper-batch.exe') -Destination $delivery
 Copy-Item -LiteralPath (Join-Path $source 'LICENSE') -Destination (Join-Path $delivery 'whisper-LICENSE')
 Copy-Item -LiteralPath $jsonLicense -Destination $delivery
-$exe = Join-Path $delivery 'whisper-stream.exe'
+$exe = Join-Path $delivery 'whisper-batch.exe'
 $imports = Native (Get-Command dumpbin.exe).Source @('/nologo', '/dependents', $exe) (Join-Path $delivery 'pe-dependencies.txt')
 $dlls = @()
 foreach ($line in $imports) {
@@ -70,14 +70,12 @@ foreach ($line in $imports) {
     }
 }
 if ($dlls.Count -eq 0) { throw 'No PE imports parsed; dependency audit inconclusive' }
-# The native entry implements --metadata, not --component-info. Retain the real argv.
-$metadata = Native $exe @('--metadata') (Join-Path $delivery 'metadata-smoke.json')
+$metadata = Native $exe @('--component-info') (Join-Path $delivery 'metadata-smoke.json')
 $info = ($metadata -join "`n") | ConvertFrom-Json
-if ($info.component -cne 'whisper-stream' -or $info.protocol -cne 'fengshen.whispercpp.stream/v1' -or $info.native -isnot [bool] -or -not $info.native -or $info.source_commit -cne $sourceCommit -or $info.vad_supported -isnot [bool] -or -not $info.vad_supported) { throw 'Native metadata identity/protocol/VAD mismatch' }
-JsonFile ([ordered]@{schema=1; component_id='whisper-stream'; binary_source='source-build'; source_commit=$sourceCommit; platform='windows-amd64-cpu'; crt='static /MT'; system_dlls=$dlls; build_inputs=$inputs; metadata_arguments=@('--metadata'); vad_supported=$true; startup_test='passed'; clean_environment='not_verified'; inference='not_tested'}) (Join-Path $delivery 'build-evidence.json')
+if ($info.schema -ne 1 -or $info.component_id -cne 'whisper-batch' -or $info.version -cne $version -or $info.os -cne 'windows' -or $info.arch -cne 'amd64' -or $info.packaging -cne 'native' -or $info.protocol -cne 'fengshen.whispercpp.batch/v1' -or @($info.protocols).Count -ne 1 -or $info.protocols[0] -cne 'fengshen.whispercpp.batch/v1' -or $info.native -isnot [bool] -or -not $info.native -or $info.source_commit -cne $sourceCommit -or $info.vad_supported -isnot [bool] -or -not $info.vad_supported -or $info.inference -cne 'not_tested') { throw 'Native batch metadata mismatch' }
+JsonFile ([ordered]@{schema=1; component_id='whisper-batch'; binary_source='source-build'; source_commit=$sourceCommit; platform='windows-amd64-cpu'; crt='static /MT'; system_dlls=$dlls; build_inputs=$inputs; metadata_arguments=@('--component-info'); vad_supported=$true; startup_test='passed'; clean_environment='not_verified'; inference='not_tested'}) (Join-Path $delivery 'build-evidence.json')
 $files = @(Get-ChildItem -LiteralPath $delivery -File -Recurse | Sort-Object FullName | ForEach-Object { [ordered]@{path=$_.FullName.Substring($delivery.Length+1).Replace('\','/'); bytes=$_.Length.ToString([Globalization.CultureInfo]::InvariantCulture); sha256=(Hash $_.FullName)} })
-JsonFile ([ordered]@{schema=1; component_id='whisper-stream'; version=$version; os='windows'; arch='amd64'; entry_type='executable'; entry='whisper-stream.exe'; packaging='native'; protocols=@('fengshen.whispercpp.stream/v1','--fengshen-stream-v1'); files=$files; runtime_dependencies=@(); model_refs=@('whisper-asr','whisper-vad'); driver_requirements=@('Windows x64 CPU'); build_inputs=$inputs; startup_report_ref='startup-report.json'}) (Join-Path $delivery 'manifest.json')
-JsonFile ([ordered]@{schema=1; component_id='whisper-stream'; version=$version; manifest_sha256=(Hash (Join-Path $delivery 'manifest.json')); startup_test='passed'; metadata_only=@{arguments=@('--metadata'); exit_code=0; checked_at=[DateTime]::UtcNow.ToString('o'); no_model_load=$true; no_network=$true; no_compilation=$true}; clean_environment='not_verified'; protocol_evidence='declared_not_tested'; inference='not_tested'}) (Join-Path $delivery 'startup-report.json')
-# Report hashes are bound outside Manifest.Files, avoiding manifest/report cycles.
+JsonFile ([ordered]@{schema=1; component_id='whisper-batch'; version=$version; os='windows'; arch='amd64'; entry_type='executable'; entry='whisper-batch.exe'; packaging='native'; protocols=@('fengshen.whispercpp.batch/v1'); files=$files; runtime_dependencies=@(); model_refs=@('whisper-asr','whisper-vad'); driver_requirements=@('Windows x64 CPU'); build_inputs=$inputs; startup_report_ref='startup-report.json'}) (Join-Path $delivery 'manifest.json')
+JsonFile ([ordered]@{schema=1; component_id='whisper-batch'; version=$version; manifest_sha256=(Hash (Join-Path $delivery 'manifest.json')); startup_test='passed'; metadata_only=@{arguments=@('--component-info'); exit_code=0; checked_at=[DateTime]::UtcNow.ToString('o'); no_model_load=$true; no_network=$true; no_compilation=$true}; clean_environment='not_verified'; protocol_evidence='declared_not_tested'; inference='not_tested'}) (Join-Path $delivery 'startup-report.json')
 JsonFile @{schema=1; files=@(@{path='manifest.json'; sha256=(Hash (Join-Path $delivery 'manifest.json'))}, @{path='startup-report.json'; sha256=(Hash (Join-Path $delivery 'startup-report.json'))})} (Join-Path $build 'delivery-index.json')
 Write-Output "Native source delivery: $delivery"

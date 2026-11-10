@@ -21,7 +21,7 @@ func defaultScopeManager(t *testing.T) *Manager {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	root := t.TempDir()
-	for _, rel := range []string{"sidecar", "models", filepath.Join("assets", "haar")} {
+	for _, rel := range []string{"sidecar", "models", filepath.Join("external", "haar")} {
 		if err := os.MkdirAll(filepath.Join(root, rel), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -30,7 +30,7 @@ func defaultScopeManager(t *testing.T) *Manager {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowFixtureRoots(m, filepath.Join(root, "models"), filepath.Join(root, "sidecar", "seed-vc", "checkpoints"), filepath.Join(root, "assets", "haar"))
+	allowFixtureRoots(m, filepath.Join(root, "models"), filepath.Join(root, "sidecar", "seed-vc", "checkpoints"), filepath.Join(root, "external", "haar"))
 	t.Cleanup(func() { m.Close() })
 	return m
 }

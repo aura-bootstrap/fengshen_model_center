@@ -52,7 +52,7 @@ func deliveryFixture(t *testing.T) (string, string) {
 	return root, dir
 }
 func TestWhisperStreamDeliveryDeclaresImplementedVAD(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join("..", "..", "installer", "build_whisper_stream.ps1"))
+	body, err := os.ReadFile(filepath.Join("..", "..", "external", "whisper", "stream", "build.ps1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestWhisperStreamDeliveryDeclaresImplementedVAD(t *testing.T) {
 
 func TestWhisperBatchDeliveryContract(t *testing.T) {
 	root := filepath.Join("..", "..")
-	body, err := os.ReadFile(filepath.Join(root, "installer", "build_whisper_batch.ps1"))
+	body, err := os.ReadFile(filepath.Join(root, "external", "whisper", "batch", "build.ps1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,14 +76,14 @@ func TestWhisperBatchDeliveryContract(t *testing.T) {
 		}
 	}
 	body, err = os.ReadFile("snapshot.go")
-	if err != nil || !strings.Contains(string(body), "installer/build_whisper_batch.ps1") {
+	if err != nil || !strings.Contains(string(body), "external/whisper/batch/build.ps1") {
 		t.Fatal("batch builder omitted from source snapshot", err)
 	}
 }
 
 func TestNativeResourcesIncludeAddedInputs(t *testing.T) {
 	root := t.TempDir()
-	base := filepath.Join(root, "assets", "whisper", "stream")
+	base := filepath.Join(root, "external", "whisper", "stream")
 	if err := os.MkdirAll(base, 0700); err != nil {
 		t.Fatal(err)
 	}

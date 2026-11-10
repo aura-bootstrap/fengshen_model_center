@@ -32,7 +32,7 @@ import (
 const runtimeHTTPOptIn = "FENGSHEN_CENTER_RUNTIME_HTTP_E2E"
 
 // This is a trusted developer test driver, not a user-engine authorization test.
-// Build and trust it using installer/test_model_center_runtime_http.ps1 only.
+// Build and trust it using external/model-center/test_runtime_http.ps1 only.
 func TestRuntimeHTTPE2E(t *testing.T) {
 	if !runtimeHTTPEnabled(os.Getenv(runtimeHTTPOptIn)) {
 		t.Skip("explicit opt-in required: FENGSHEN_CENTER_RUNTIME_HTTP_E2E=1; real HTTP inference is not tested by default")
@@ -56,8 +56,8 @@ func TestRuntimeHTTPE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	paths := map[string]string{
-		"haar-frontal": filepath.Join(repo, "assets", "haar", "haarcascade_frontalface_default.xml"),
-		"haar-profile": filepath.Join(repo, "assets", "haar", "haarcascade_profileface.xml"),
+		"haar-frontal": filepath.Join(repo, "external", "haar", "haarcascade_frontalface_default.xml"),
+		"haar-profile": filepath.Join(repo, "external", "haar", "haarcascade_profileface.xml"),
 	}
 	for _, path := range paths {
 		runtimeHTTPRegular(t, path)
