@@ -32,6 +32,8 @@ import (
 	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/transcript"
 )
 
+const whisperWindowUnstableCode = "center_whisper_window_unstable"
+
 var errWhisperResult = errors.New("center_result_invalid")
 
 // Retain only an allowlisted native code, never the frame or its cause.
@@ -41,6 +43,20 @@ type whisperInferenceError struct {
 }
 
 func (*whisperInferenceError) Error() string { return "center_result_invalid" }
+
+type whisperWindowUnstableError struct{}
+
+func (*whisperWindowUnstableError) Error() string { return whisperWindowUnstableCode }
+
+func isWhisperWindowUnstable(err error) bool {
+	var unstable *whisperWindowUnstableError
+	return errors.As(err, &unstable)
+}
+
+type whisperStreamState struct {
+	committedItems []runtimejobs.TranscriptItem
+	through        float64
+}
 
 // transcribe accepts only task-owned prepared audio and internally resolved models.
 func (e *Executor) transcribe(ctx context.Context, req runtimejobs.Request, resolved Resolved, emit runtimejobs.Emit) (runtimejobs.Result, error) {
@@ -146,7 +162,21 @@ func (e *Executor) transcribe(ctx context.Context, req runtimejobs.Request, reso
 		return runtimejobs.Result{}, errWhisperResult
 	}
 	if input.Stream {
-		return e.whisperStream(ctx, req, resolved, entryPath, pcm, count, path, meta.SHA256, model, vadModel, emit)
+		var state whisperStreamState
+		result, streamErr := e.whisperStream(ctx, req, resolved, entryPath, pcm, count, path, meta.SHA256, model, vadModel, emit, &state)
+		if isWhisperWindowUnstable(streamErr) && e.batchFallback != nil {
+			batch, resolveErr := e.batchFallback(ctx, resolved.Models)
+			if resolveErr == nil {
+				recovered, recoveryErr := e.whisperBatchRecovery(ctx, req, batch, state, count, path, model, vadModel, emit)
+				if batch.Release != nil {
+					batch.Release()
+				}
+				if recoveryErr == nil {
+					return recovered, nil
+				}
+			}
+		}
+		return result, streamErr
 	}
 	session, err := e.newShimSession(ctx, "whisper-batch", entryPath, "", "")
 	if err != nil {
@@ -344,7 +374,7 @@ func whisperWSRead(ctx context.Context, stream *componentclient.Stream, kind, id
 	return whisperWire{}, readErr
 }
 
-func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, resolved Resolved, entryPath string, pcm io.Reader, count int64, path, digest, model, vadModel string, emit runtimejobs.Emit) (runtimejobs.Result, error) {
+func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, resolved Resolved, entryPath string, pcm io.Reader, count int64, path, digest, model, vadModel string, emit runtimejobs.Emit, state *whisperStreamState) (runtimejobs.Result, error) {
 	input := *req.Body.Transcribe
 	if emit == nil {
 		return runtimejobs.Result{}, errors.New("center_request_invalid")
@@ -370,7 +400,7 @@ func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, r
 	defer session.Close()
 	stream, err := session.client.DialStream(ctx)
 	if err != nil {
-		return runtimejobs.Result{}, whisperContextError(ctx, errors.New("center_whisper_failed"))
+		return runtimejobs.Result{}, whisperStreamContextError(ctx, errors.New("center_whisper_failed"))
 	}
 	defer stream.Close()
 	id := "E" + strconv.Itoa(input.EpisodeNumber) + "-" + digest[:16]
@@ -379,10 +409,10 @@ func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, r
 		models["whisper-vad"] = vadModel
 	}
 	if err := stream.Send(ctx, map[string]any{"protocol": componentprotocol.StreamWSv1, "type": "start", "request_id": id, "episode_number": input.EpisodeNumber, "duration_sec": duration, "format": "s16le/16000/1", "options": options, "models": models, "vad": input.VAD}); err != nil {
-		return runtimejobs.Result{}, whisperContextError(ctx, err)
+		return runtimejobs.Result{}, whisperStreamContextError(ctx, err)
 	}
 	if _, err := whisperWSRead(ctx, stream, "ready", id, input.EpisodeNumber, 0); err != nil {
-		return runtimejobs.Result{}, whisperContextError(ctx, err)
+		return runtimejobs.Result{}, whisperStreamContextError(ctx, err)
 	}
 	var previous *runtimejobs.StreamCommit
 	committedItems := make([]runtimejobs.TranscriptItem, 0)
@@ -406,6 +436,10 @@ func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, r
 			return err
 		}
 		committedItems = append(committedItems, projected.Items...)
+		if state != nil {
+			state.committedItems = append([]runtimejobs.TranscriptItem(nil), committedItems...)
+			state.through = projected.CommittedThroughSec
+		}
 		return nil
 	}
 	var revision uint64 = 1
@@ -423,11 +457,11 @@ func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, r
 		}
 		end := offset + samples
 		if err := stream.Send(ctx, map[string]any{"protocol": componentprotocol.StreamWSv1, "type": "audio", "request_id": id, "episode_number": input.EpisodeNumber, "revision": revision, "start_sec": float64(offset) / 16000, "end_sec": float64(end) / 16000, "sample_count": samples, "pcm": base64.StdEncoding.EncodeToString(buffer[:samples*2])}); err != nil {
-			return runtimejobs.Result{}, whisperContextError(ctx, err)
+			return runtimejobs.Result{}, whisperStreamContextError(ctx, err)
 		}
 		m, err := whisperWSRead(ctx, stream, "hypothesis", id, input.EpisodeNumber, revision)
 		if err != nil {
-			return runtimejobs.Result{}, whisperContextError(ctx, err)
+			return runtimejobs.Result{}, whisperStreamContextError(ctx, err)
 		}
 		if math.Abs(*m.Through-float64(end)/16000) > 1e-9 {
 			return runtimejobs.Result{}, errWhisperResult
@@ -438,17 +472,17 @@ func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, r
 		offset = end
 	}
 	if err := stream.Send(ctx, map[string]any{"protocol": componentprotocol.StreamWSv1, "type": "finalize", "request_id": id, "episode_number": input.EpisodeNumber, "revision": revision, "committed_through_sec": duration}); err != nil {
-		return runtimejobs.Result{}, whisperContextError(ctx, err)
+		return runtimejobs.Result{}, whisperStreamContextError(ctx, err)
 	}
 	m, err := whisperWSRead(ctx, stream, "final", id, input.EpisodeNumber, revision)
 	if err != nil {
-		return runtimejobs.Result{}, whisperContextError(ctx, err)
+		return runtimejobs.Result{}, whisperStreamContextError(ctx, err)
 	}
 	if math.Abs(*m.Through-duration) > 1e-9 {
 		return runtimejobs.Result{}, errWhisperResult
 	}
 	if err := stream.ExpectNormalClose(ctx); err != nil {
-		return runtimejobs.Result{}, whisperContextError(ctx, errors.New("center_whisper_failed"))
+		return runtimejobs.Result{}, whisperStreamContextError(ctx, errors.New("center_whisper_failed"))
 	}
 	if err := publish(m); err != nil {
 		return runtimejobs.Result{}, err
@@ -464,9 +498,101 @@ func (e *Executor) whisperStream(ctx context.Context, req runtimejobs.Request, r
 	return runtimejobs.Result{Component: req.Body.Component, Stream: &final}, nil
 }
 
+func (e *Executor) whisperBatchRecovery(ctx context.Context, req runtimejobs.Request, resolved Resolved, state whisperStreamState, count int64, path, model, vadModel string, emit runtimejobs.Emit) (runtimejobs.Result, error) {
+	input := *req.Body.Transcribe
+	if emit == nil || resolved.Manifest.ComponentID != "whisper-batch" || resolved.Manifest.Entry == "" {
+		return runtimejobs.Result{}, errWhisperResult
+	}
+	entryPath := filepath.Join(resolved.ComponentRoot, filepath.FromSlash(resolved.Manifest.Entry))
+	session, err := e.newShimSession(ctx, "whisper-batch", entryPath, "", "")
+	if err != nil {
+		return runtimejobs.Result{}, err
+	}
+	defer session.Close()
+	models := map[string][]string{"whisper-asr": {model}}
+	if input.VAD {
+		models["whisper-vad"] = []string{vadModel}
+	}
+	if err := emit(runtimejobs.Progress{Stage: runtimejobs.StageRunning, Completed: 0, Total: 1}); err != nil {
+		return runtimejobs.Result{}, err
+	}
+	snap, err := session.client.SubmitJob(ctx, componentprotocol.JobRequest{
+		Protocol: componentprotocol.BatchHTTPv1, Kind: "whisper-batch",
+		RequestID: req.RequestID + "-batch-fallback",
+		Input:     componentprotocol.JobInput{AudioPath: path},
+		Models:    models,
+		Options:   componentprotocol.JobOptions{VAD: input.VAD},
+	})
+	if err != nil {
+		return runtimejobs.Result{}, whisperContextError(ctx, errors.New("center_whisper_failed"))
+	}
+	snap, err = session.client.WaitJob(ctx, snap.ID)
+	if err != nil {
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = session.client.CancelJob(cancelCtx, snap.ID)
+		cancel()
+		return runtimejobs.Result{}, whisperContextError(ctx, errors.New("center_whisper_failed"))
+	}
+	if snap.State != componentprotocol.JobSucceeded {
+		return runtimejobs.Result{}, whisperContextError(ctx, errors.New("center_whisper_failed"))
+	}
+	data, err := session.client.DownloadArtifact(ctx, snap.ID, "transcript.json", runtimejobs.MaxResultBytes)
+	if err != nil {
+		return runtimejobs.Result{}, errWhisperResult
+	}
+	duration := float64(count) / 16000
+	items, err := whisperBatchItems(data, input, duration)
+	if err != nil {
+		return runtimejobs.Result{}, err
+	}
+	recovered, cumulative, ok := mergeWhisperFallbackItems(state.committedItems, state.through, items)
+	if !ok {
+		return runtimejobs.Result{}, errWhisperResult
+	}
+	final := runtimejobs.StreamCommit{
+		EpisodeNumber: input.EpisodeNumber, Revision: 1 << 32,
+		CommittedThroughSec: duration, Items: recovered, Final: true,
+	}
+	if err := emit(runtimejobs.Progress{Stage: runtimejobs.StageRunning, Completed: 1, Total: 1, Commit: &final}); err != nil {
+		return runtimejobs.Result{}, err
+	}
+	cumulativeResult := final
+	cumulativeResult.Items = cumulative
+	return runtimejobs.Result{Component: req.Body.Component, Stream: &cumulativeResult}, nil
+}
+
+// mergeWhisperFallbackItems keeps the already-streamed stable prefix and only
+// publishes batch items beyond it. This preserves the client's cumulative
+// event contract without replaying or rewriting committed text.
+func mergeWhisperFallbackItems(previous []runtimejobs.TranscriptItem, through float64, items []runtimejobs.TranscriptItem) (recovered, cumulative []runtimejobs.TranscriptItem, ok bool) {
+	recovered = make([]runtimejobs.TranscriptItem, 0, len(items))
+	for _, item := range items {
+		if item.StartSec+1e-9 < through {
+			continue
+		}
+		recovered = append(recovered, item)
+	}
+	cumulative = append(append([]runtimejobs.TranscriptItem(nil), previous...), recovered...)
+	return recovered, cumulative, len(cumulative) > 0
+}
+
 func whisperContextError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	return err
+}
+
+// A window-stability fault is episode-scoped and recoverable by the caller.
+// Keep it distinct from other sanitized streaming failures without exposing the
+// native frame or any transcript material.
+func whisperStreamContextError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	var inference *whisperInferenceError
+	if errors.As(err, &inference) && inference.code == "window_unstable" {
+		return &whisperWindowUnstableError{}
 	}
 	return err
 }

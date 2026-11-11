@@ -20,6 +20,7 @@ import (
 	"github.com/aura-bootstrap/fengshen_model_center/internal/bindings"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeadapter"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimehttp"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimejobs"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeprocess"
@@ -205,6 +206,29 @@ func newRuntimeBindingFixture(t *testing.T) runtimeBindingFixture {
 		t.Fatalf("binding not persisted: %+v", fixture.binding)
 	}
 	return fixture
+}
+
+func TestWhisperBatchFallbackResolvesInstalledComponent(t *testing.T) {
+	fixture := newRuntimeBindingFixture(t)
+	models := []runtimeadapter.ModelFile{{ModelID: "whisper-asr", Path: fixture.model}}
+	resolved, err := fixture.manager.resolveWhisperBatchFallback(context.Background(), models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Manifest.ComponentID != "whisper-batch" || resolved.ComponentRoot == "" || len(resolved.Models) != 1 || resolved.Models[0].Path != fixture.model {
+		t.Fatalf("fallback resolution mismatch: %+v", resolved)
+	}
+	released := false
+	defer func() {
+		if !released {
+			resolved.Release()
+		}
+	}()
+	entry := filepath.Join(resolved.ComponentRoot, filepath.FromSlash(resolved.Manifest.Entry))
+	runtimeAssertFilePinned(t, entry)
+	resolved.Release()
+	released = true
+	runtimeAssertFileReleased(t, entry)
 }
 
 type capabilityTestExecution struct {

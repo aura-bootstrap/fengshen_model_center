@@ -11,12 +11,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
-	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/transcript"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/components"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/integration"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimejobs"
 	"github.com/aura-bootstrap/fengshen_model_center/internal/runtimeprocess"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/domain"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/transcript"
 	"strings"
 )
 
@@ -164,6 +164,34 @@ func TestWhisperWireStrict(t *testing.T) {
 	}
 	if _, err := whisperReadMessage(io.LimitReader(bytes.NewReader(bytes.Repeat([]byte("x"), (1<<20)+1)), (1<<20)+1), "ready", "request", 2, 0); err == nil {
 		t.Fatal("accepted oversized line")
+	}
+}
+
+func TestWhisperWindowUnstableKeepsRecoverableCode(t *testing.T) {
+	err := whisperStreamContextError(context.Background(), &whisperInferenceError{code: "window_unstable"})
+	if err == nil || err.Error() != whisperWindowUnstableCode {
+		t.Fatalf("window instability must stay distinct, got %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := whisperStreamContextError(ctx, &whisperInferenceError{code: "window_unstable"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation must win over native classification: %v", err)
+	}
+}
+
+func TestWhisperWindowFallbackKeepsCommittedPrefix(t *testing.T) {
+	previous := []runtimejobs.TranscriptItem{{StartSec: 20, EndSec: 29, Text: "已提交"}}
+	items := []runtimejobs.TranscriptItem{
+		{StartSec: 5, EndSec: 18, Text: "已提交"},
+		{StartSec: 18, EndSec: 31, Text: "跨界"},
+		{StartSec: 31, EndSec: 40, Text: "回退新增"},
+	}
+	recovered, cumulative, ok := mergeWhisperFallbackItems(previous, 29, items)
+	if !ok || len(recovered) != 1 || recovered[0].Text != "回退新增" || len(cumulative) != 2 || cumulative[0].Text != "已提交" {
+		t.Fatalf("fallback merge mismatch: recovered=%+v cumulative=%+v ok=%v", recovered, cumulative, ok)
+	}
+	if _, _, ok := mergeWhisperFallbackItems(nil, 40, items[:2]); ok {
+		t.Fatal("all-before-boundary batch output must fail closed")
 	}
 }
 

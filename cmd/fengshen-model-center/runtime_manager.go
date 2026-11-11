@@ -68,6 +68,70 @@ func (m *Manager) runtimeBinding(ref integration.ExecutionBindingRef, component 
 	return binding, nil
 }
 
+// resolveWhisperBatchFallback uses an installed, verified batch component with
+// the already-pinned stream model files. It is episode-scoped recovery for a
+// rolling-window instability, not a second user-selected binding.
+func (m *Manager) resolveWhisperBatchFallback(ctx context.Context, models []runtimeadapter.ModelFile) (out runtimeadapter.Resolved, err error) {
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
+	var selected *components.Evidence
+	for _, evidence := range m.Components() {
+		if evidence.ComponentID != "whisper-batch" || evidence.Manifest == nil || evidence.Manifest.ComponentID != evidence.ComponentID ||
+			evidence.Manifest.Version != evidence.Version || evidence.FilesState != "complete" || evidence.Platform != "matched" ||
+			evidence.StartupTest != "passed" ||
+			!contains(evidence.Manifest.Protocols, "fengshen.whispercpp.batch/v1") {
+			continue
+		}
+		copy := evidence
+		selected = &copy
+		break
+	}
+	if selected == nil {
+		return out, errors.New("center_component_missing")
+	}
+	verified, err := m.components.Verify(ctx, selected.ComponentID, selected.Version)
+	if err != nil || verified.Manifest == nil || verified.ManifestSHA256 != selected.ManifestSHA256 ||
+		verified.FilesState != "complete" || verified.Platform != "matched" || verified.Integrity != "matched" ||
+		verified.StartupTest != "passed" || !contains(verified.Manifest.Protocols, "fengshen.whispercpp.batch/v1") {
+		return out, errors.New("center_component_unverified")
+	}
+	pins := &runtimePins{}
+	out.Release = pins.release
+	defer func() {
+		if err != nil {
+			out.Release()
+		}
+	}()
+	out.ComponentRoot = components.ComponentDirectory(m.componentRoot, selected.ComponentID, selected.Version)
+	if err = pins.directory(out.ComponentRoot); err != nil {
+		return out, errors.New("center_component_unverified")
+	}
+	for _, file := range verified.Manifest.Files {
+		path := filepath.Join(out.ComponentRoot, filepath.FromSlash(file.Path))
+		if err = pins.directory(filepath.Dir(path)); err != nil {
+			return out, errors.New("center_component_unverified")
+		}
+		pinned, pinErr := runtimeprocess.PinFile(path)
+		if pinErr != nil {
+			return out, errors.New("center_component_unverified")
+		}
+		pins.files = append(pins.files, pinned)
+		if file.Path == verified.Manifest.Entry {
+			out.Entry, err = runtimeprocess.VerifyBinary(path, file.SHA256, selected.ComponentID+"/"+selected.Version, verified.ManifestSHA256)
+			if err != nil {
+				return out, errors.New("center_component_unverified")
+			}
+		}
+	}
+	if out.Entry == (runtimeprocess.VerifiedBinary{}) {
+		return out, errors.New("center_component_unverified")
+	}
+	out.Manifest = *verified.Manifest
+	out.Models = append([]runtimeadapter.ModelFile(nil), models...)
+	return out, nil
+}
+
 func (m *Manager) validateRuntimeBinding(ctx context.Context, ref integration.ExecutionBindingRef, component integration.ExecutionComponentRef) error {
 	if err := ctx.Err(); err != nil {
 		return err

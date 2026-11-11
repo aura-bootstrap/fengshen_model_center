@@ -29,24 +29,26 @@ type Resolved struct {
 	Release       func()
 }
 type Resolver func(context.Context, integration.ExecutionBindingRef, integration.ExecutionComponentRef) (Resolved, error)
+type BatchFallbackResolver func(context.Context, []ModelFile) (Resolved, error)
 
 type Executor struct {
-	resolve    Resolver
-	assets     *runtimeassets.Store
-	scratch    string
-	supervisor runtimeprocess.Supervisor
-	shimPath   string
-	launchShim shimLauncher
-	mu         sync.Mutex
-	closed     bool
-	llama      *llamaRuntime
-	heavy      chan struct{}
-	lifetime   context.Context
-	cancel     context.CancelFunc
-	active     sync.WaitGroup
-	timers     sync.WaitGroup
-	closeDone  chan struct{}
-	closeErr   error
+	resolve       Resolver
+	batchFallback BatchFallbackResolver
+	assets        *runtimeassets.Store
+	scratch       string
+	supervisor    runtimeprocess.Supervisor
+	shimPath      string
+	launchShim    shimLauncher
+	mu            sync.Mutex
+	closed        bool
+	llama         *llamaRuntime
+	heavy         chan struct{}
+	lifetime      context.Context
+	cancel        context.CancelFunc
+	active        sync.WaitGroup
+	timers        sync.WaitGroup
+	closeDone     chan struct{}
+	closeErr      error
 	// Test clock only; production uses a stoppable timer.
 	llamaAfter func(time.Duration) <-chan time.Time
 }
@@ -64,6 +66,12 @@ func New(resolve Resolver, assets *runtimeassets.Store, scratch string) (*Execut
 		e.shimPath = filepath.Join(filepath.Dir(exe), "fengshen-shim.exe")
 	}
 	return e, nil
+}
+
+// SetWhisperBatchFallback installs the episode-scoped recovery resolver. It
+// must be set before the HTTP server starts; it is not changed while serving.
+func (e *Executor) SetWhisperBatchFallback(resolver BatchFallbackResolver) {
+	e.batchFallback = resolver
 }
 
 func (e *Executor) initLocked() {

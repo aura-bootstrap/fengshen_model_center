@@ -146,6 +146,7 @@ func run(listen, root, rootKind, data, integrationData, installRoot, componentRo
 		store.Close()
 		return err
 	}
+	executor.SetWhisperBatchFallback(manager.resolveWhisperBatchFallback)
 	jobs, err := runtimejobs.New(executor, runtimejobs.Options{})
 	if err != nil {
 		executor.Close()

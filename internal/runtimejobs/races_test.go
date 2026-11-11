@@ -81,6 +81,7 @@ func TestExecutorFixedFailureCodes(t *testing.T) {
 		"center_component_missing",
 		"center_protocol_unsupported",
 		"center_whisper_failed",
+		"center_whisper_window_unstable",
 		"center_llama_load_failed",
 		"center_llama_inference_failed",
 		"center_result_invalid",
