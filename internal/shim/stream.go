@@ -79,7 +79,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			writeStreamError(ctx, c, start, "component_request")
 			return
 		}
-		if err := writeChildLine(child.Stdin(), data); err != nil {
+		if err := writeChildLine(child.Stdin(), childMessage(data)); err != nil {
 			writeStreamError(ctx, c, start, "component_failed")
 			return
 		}

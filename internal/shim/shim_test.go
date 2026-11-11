@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/aura-bootstrap/fengshen_model_center/internal/componentprotocol"
+	"github.com/aura-bootstrap/fengshen_model_center/internal/upstream/highlight/transcript"
 	"github.com/coder/websocket"
 )
 
@@ -239,6 +240,16 @@ func newEchoChild() *fakeChild {
 				continue
 			}
 			reply := map[string]any{"protocol": componentprotocol.StreamWSv1, "request_id": "r1", "episode_number": 1, "revision": 1, "items": []any{"a"}[:0]}
+			if m["protocol"] != string(transcript.StreamProtocolVersion) {
+				// The real child only accepts the native protocol; the shim must
+				// translate start, audio and finalize frames before forwarding.
+				reply["protocol"] = transcript.StreamProtocolVersion
+				reply["type"] = "error"
+				reply["error_code"] = "request_identity"
+				raw, _ := json.Marshal(reply)
+				_, _ = outW.Write(append(raw, '\n'))
+				continue
+			}
 			switch m["type"] {
 			case "start":
 				reply["type"] = "ready"
