@@ -220,7 +220,10 @@ struct TokenAccumulator {
     std::string fragment; int64_t fragment_start = 0, fragment_end = 0;
     void add(const std::string & piece, int64_t t0, int64_t t1) {
         if (piece.empty()) return;
-        require(t0 >= 0 && t1 >= t0, "token_timeline");
+        // Energy alignment can shrink t1 to the next token's t0, which may fall
+        // before t0. Such a token has no placeable interval; drop it alone.
+        if (t0 >= 0 && t1 < t0) return;
+        require(t0 >= 0, "token_timeline");
         bool continuing = !fragment.empty();
         if (!continuing) { fragment_start = t0; fragment_end = t1; }
         fragment += piece; fragment_end = std::max(fragment_end, t1);
@@ -276,15 +279,22 @@ struct Decoder {
     std::vector<float> audio; J history = J::array(), suffix = J::array(); std::vector<int> stable;
     double locked_end = 0;
     Decoder(const std::string & model, int n, Options o, const std::string & vad_model = "") : options(o), threads(n) {
-        auto cp = whisper_context_default_params(); cp.use_gpu = false;
-        ctx.reset(whisper_init_from_file_with_params_no_state(model.c_str(), cp));
-        require(ctx != nullptr, "model_load"); state.reset(whisper_init_state(ctx.get())); require(state != nullptr, "state_init");
+        // Prefer the GPU backend. A missing or unusable Vulkan device must not
+        // fail the request, so fall back to CPU with the same thread budget.
+        if (!load(model, true)) require(load(model, false), "model_load");
         if (!vad_model.empty()) {
             require(!cancelled, "cancelled");
             auto vp = whisper_vad_default_context_params(); vp.use_gpu = false; vp.n_threads = n;
             vad.reset(whisper_vad_init_from_file_with_params(vad_model.c_str(), vp));
             require(!cancelled, "cancelled"); require(vad != nullptr, "vad_model_load");
         }
+    }
+    bool load(const std::string & model, bool gpu) {
+        auto cp = whisper_context_default_params(); cp.use_gpu = gpu;
+        ctx.reset(whisper_init_from_file_with_params_no_state(model.c_str(), cp));
+        if (!ctx) return false;
+        state.reset(whisper_init_state(ctx.get()));
+        return state != nullptr;
     }
     void append(const std::vector<float> & samples) {
         int64_t desired = std::max<int64_t>(0, total+samples.size()-static_cast<int64_t>(options.window*rate));
@@ -369,6 +379,25 @@ static J envelope(const char * type, const std::string & id, int episode, uint64
     return J{{"protocol",protocol},{"type",type},{"request_id",id},{"episode_number",episode},{"revision",revision}};
 }
 static void quiet(enum ggml_log_level, const char *, void *) {}
+// Logical processors over-subscribe hybrid CPUs and collapse decoder throughput;
+// physical cores are the measured ceiling.
+static int default_threads() {
+#ifdef _WIN32
+    DWORD len = 0;
+    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &len);
+    std::vector<char> buf(len);
+    if (len > 0 && GetLogicalProcessorInformationEx(RelationProcessorCore, reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buf.data()), &len)) {
+        int cores = 0;
+        for (DWORD at = 0; at < len;) {
+            auto * info = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buf.data() + at);
+            if (info->Size == 0) break;
+            ++cores; at += info->Size;
+        }
+        if (cores > 0) return std::min(256, cores);
+    }
+#endif
+    return static_cast<int>(std::min(256u, std::max(1u, std::thread::hardware_concurrency())));
+}
 int main(int argc, char ** argv) {
 #ifdef _WIN32
     _setmode(_fileno(stdin), _O_BINARY); _setmode(_fileno(stdout), _O_BINARY);
@@ -379,11 +408,15 @@ int main(int argc, char ** argv) {
     int result = 1;
     try {
         if (argc==2 && std::string(argv[1])=="--metadata") {
-            send({{"protocol",protocol},{"native",true},{"component","whisper-stream"},{"source_commit","4979e04f5dcaccb36057e059bbaed8a2f5288315"},{"vad_supported",true},{"max_message_bytes",max_line},{"max_duration_sec",7200}});
+            send({{"protocol",protocol},{"native",true},{"component","whisper-stream"},{"source_commit","4979e04f5dcaccb36057e059bbaed8a2f5288315"},{"vad_supported",true},
+#ifdef WHISPER_STREAM_VULKAN
+                  {"gpu_backend","vulkan"},
+#endif
+                  {"max_message_bytes",max_line},{"max_duration_sec",7200}});
             std::_Exit(0);
         }
         require(argc>=4 && std::string(argv[1])=="--fengshen-stream-v1", "arguments");
-        std::string model, vad_model; int threads=4; bool have_threads=false, use_vad=false;
+        std::string model, vad_model; int threads=default_threads(); bool have_threads=false, use_vad=false;
         for (int i=2; i<argc; ++i) {
             std::string a=argv[i];
             if (a=="--model" && model.empty() && i+1<argc) model=argv[++i];

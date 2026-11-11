@@ -39,7 +39,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		writeStreamError(ctx, c, start, "component_request")
 		return
 	}
-	args := []string{streamArgument, "--model", start.Models["whisper-asr"], "--threads", "4"}
+	args := []string{streamArgument, "--model", start.Models["whisper-asr"]}
 	if start.VAD {
 		args = append(args, "--vad", "--vad-model", start.Models["whisper-vad"])
 	}

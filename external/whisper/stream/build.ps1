@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$DependencyRoot,
-    [Parameter(Mandatory=$true)][string]$BuildDirectory
+    [Parameter(Mandatory=$true)][string]$BuildDirectory,
+    [string]$VulkanSdk = ''
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -24,7 +25,19 @@ function Native([string]$Program, [string[]]$Arguments, [string]$Log) {
     return $lines
 }
 $sourceCommit = '4979e04f5dcaccb36057e059bbaed8a2f5288315'
-$version = '4979e04-stream-v1'
+$vulkan = $VulkanSdk -ne ''
+$version = $(if ($vulkan) { '4979e04-stream-v2-vulkan' } else { '4979e04-stream-v1' })
+$loaderDll = $null
+$loaderLicense = $null
+if ($vulkan) {
+    if ($VulkanSdk -notmatch '^[A-Za-z]:[\\/]') { throw 'VulkanSdk must be absolute' }
+    $VulkanSdk = [IO.Path]::GetFullPath($VulkanSdk).TrimEnd('\','/')
+    $loaderDll = Join-Path $VulkanSdk 'Bin\vulkan-1.dll'
+    $loaderLicense = Join-Path $VulkanSdk 'Share\Licenses\Vulkan-Loader-LICENSE.txt'
+    foreach ($p in @((Join-Path $VulkanSdk 'Include\vulkan\vulkan.h'), (Join-Path $VulkanSdk 'Lib\vulkan-1.lib'), (Join-Path $VulkanSdk 'Bin\glslc.exe'), $loaderDll, $loaderLicense)) {
+        if (-not (Test-Path -LiteralPath $p)) { throw "Vulkan SDK artifact missing: $p" }
+    }
+}
 $archive = Join-Path $DependencyRoot 'whisper.tar.gz'
 $json = Join-Path $DependencyRoot 'json.hpp'
 $jsonLicense = Join-Path $DependencyRoot 'json-LICENSE.MIT'
@@ -49,10 +62,17 @@ $ninja = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja
 $entry = [IO.Path]::GetFullPath($PSScriptRoot)
 $obj = Join-Path $build 'obj'
 $inputs = @()
-foreach ($p in @($archive, $json, $jsonLicense, (Join-Path $source 'LICENSE'), (Join-Path $entry 'main.cpp'), (Join-Path $entry 'CMakeLists.txt'), (Join-Path $entry 'vad_test.cpp'), (Join-Path $entry 'utf8_test.cpp'), $PSCommandPath, $cmake, $ninja, $tar, (Get-Command cl.exe).Source, (Get-Command link.exe).Source, (Get-Command dumpbin.exe).Source)) {
-    $inputs += [ordered]@{name=$p; version=$sourceCommit; sha256=(Hash $p); license=$(if ($p.StartsWith($vs, [StringComparison]::OrdinalIgnoreCase) -or $p -eq $tar) { 'Microsoft-toolchain-build-only' } else { 'MIT/project-source' })}
+$inputList = @($archive, $json, $jsonLicense, (Join-Path $source 'LICENSE'), (Join-Path $entry 'main.cpp'), (Join-Path $entry 'CMakeLists.txt'), (Join-Path $entry 'vad_test.cpp'), (Join-Path $entry 'utf8_test.cpp'), $PSCommandPath, $cmake, $ninja, $tar, (Get-Command cl.exe).Source, (Get-Command link.exe).Source, (Get-Command dumpbin.exe).Source)
+if ($vulkan) { $inputList += @($loaderDll, $loaderLicense, (Join-Path $VulkanSdk 'Include\vulkan\vulkan.h'), (Join-Path $VulkanSdk 'Lib\vulkan-1.lib'), (Join-Path $VulkanSdk 'Bin\glslc.exe')) }
+foreach ($p in $inputList) {
+    $inputs += [ordered]@{name=$p; version=$sourceCommit; sha256=(Hash $p); license=$(if ($vulkan -and $p.StartsWith($VulkanSdk, [StringComparison]::OrdinalIgnoreCase)) { 'Apache-2.0' } elseif ($p.StartsWith($vs, [StringComparison]::OrdinalIgnoreCase) -or $p -eq $tar) { 'Microsoft-toolchain-build-only' } else { 'MIT/project-source' })}
 }
-$null = Native $cmake @('-S', $entry, '-B', $obj, '-G', 'Ninja', "-DCMAKE_MAKE_PROGRAM=$ninja", '-DCMAKE_BUILD_TYPE=Release', "-DWHISPER_SOURCE_DIR=$source", "-DJSON_HEADER=$json", '-DFETCHCONTENT_FULLY_DISCONNECTED=ON', '-DFETCHCONTENT_UPDATES_DISCONNECTED=ON', '-DGGML_BACKEND_DL=OFF', '-DGGML_RPC=OFF', '-DWHISPER_CURL=OFF') (Join-Path $build 'configure.log')
+$configureArgs = @('-S', $entry, '-B', $obj, '-G', 'Ninja', "-DCMAKE_MAKE_PROGRAM=$ninja", '-DCMAKE_BUILD_TYPE=Release', "-DWHISPER_SOURCE_DIR=$source", "-DJSON_HEADER=$json", '-DFETCHCONTENT_FULLY_DISCONNECTED=ON', '-DFETCHCONTENT_UPDATES_DISCONNECTED=ON', '-DGGML_BACKEND_DL=OFF', '-DGGML_RPC=OFF', '-DWHISPER_CURL=OFF')
+if ($vulkan) {
+    $env:VULKAN_SDK = $VulkanSdk
+    $configureArgs += '-DWHISPER_STREAM_VULKAN=ON'
+}
+$null = Native $cmake $configureArgs (Join-Path $build 'configure.log')
 $null = Native $cmake @('--build', $obj, '--target', 'whisper-stream', 'whisper-stream-vad-test', 'whisper-stream-utf8-test', '-j', '4') (Join-Path $build 'compile.log')
 $ctest = Join-Path (Split-Path $cmake) 'ctest.exe'
 $null = Native $ctest @('--test-dir', $obj, '--output-on-failure', '-V') (Join-Path $build 'regression.log')
@@ -63,23 +83,33 @@ New-Item -ItemType Directory -Path $delivery -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $obj 'whisper-stream.exe') -Destination $delivery
 Copy-Item -LiteralPath (Join-Path $source 'LICENSE') -Destination (Join-Path $delivery 'whisper-LICENSE')
 Copy-Item -LiteralPath $jsonLicense -Destination $delivery
+if ($vulkan) {
+    Copy-Item -LiteralPath $loaderDll -Destination $delivery
+    Copy-Item -LiteralPath $loaderLicense -Destination $delivery
+}
 $exe = Join-Path $delivery 'whisper-stream.exe'
 $imports = Native (Get-Command dumpbin.exe).Source @('/nologo', '/dependents', $exe) (Join-Path $delivery 'pe-dependencies.txt')
 $dlls = @()
 foreach ($line in $imports) {
     if ($line -match '^\s+([A-Za-z0-9_.-]+\.dll)\s*$') {
         $dll = $Matches[1]; $dlls += $dll
+        if ($vulkan -and $dll -eq 'vulkan-1.dll') { continue }
         if ($dll -notmatch '^(KERNEL32|ADVAPI32|WS2_32|CRYPT32|BCRYPT|USER32|SHELL32|OLE32|SHLWAPI|MSVCRT|NTDLL|IPHLPAPI)\.dll$') { throw "Unclosed non-system DLL dependency: $dll" }
     }
 }
 if ($dlls.Count -eq 0) { throw 'No PE imports parsed; dependency audit inconclusive' }
+if ($vulkan -and $dlls -notcontains 'vulkan-1.dll') { throw 'Vulkan build has no bundled loader dependency' }
 # The native entry implements --metadata, not --component-info. Retain the real argv.
 $metadata = Native $exe @('--metadata') (Join-Path $delivery 'metadata-smoke.json')
 $info = ($metadata -join "`n") | ConvertFrom-Json
-if ($info.component -cne 'whisper-stream' -or $info.protocol -cne 'fengshen.whispercpp.stream/v1' -or $info.native -isnot [bool] -or -not $info.native -or $info.source_commit -cne $sourceCommit -or $info.vad_supported -isnot [bool] -or -not $info.vad_supported) { throw 'Native metadata identity/protocol/VAD mismatch' }
-JsonFile ([ordered]@{schema=1; component_id='whisper-stream'; binary_source='source-build'; source_commit=$sourceCommit; platform='windows-amd64-cpu'; crt='static /MT'; system_dlls=$dlls; build_inputs=$inputs; metadata_arguments=@('--metadata'); vad_supported=$true; startup_test='passed'; clean_environment='not_verified'; inference='not_tested'}) (Join-Path $delivery 'build-evidence.json')
+if ($info.component -cne 'whisper-stream' -or $info.protocol -cne 'fengshen.whispercpp.stream/v1' -or $info.native -isnot [bool] -or -not $info.native -or $info.source_commit -cne $sourceCommit -or $info.vad_supported -isnot [bool] -or -not $info.vad_supported -or ($vulkan -and ($info.PSObject.Properties.Name -notcontains 'gpu_backend' -or $info.gpu_backend -cne 'vulkan'))) { throw 'Native metadata identity/protocol/VAD/GPU mismatch' }
+$evidence = [ordered]@{schema=1; component_id='whisper-stream'; binary_source='source-build'; source_commit=$sourceCommit; platform=$(if ($vulkan) { 'windows-amd64-vulkan' } else { 'windows-amd64-cpu' }); crt='static /MT'; gpu_backend=$(if ($vulkan) { 'vulkan' } else { 'none' }); system_dlls=$dlls; build_inputs=$inputs; metadata_arguments=@('--metadata'); vad_supported=$true; startup_test='passed'; clean_environment='not_verified'; inference='not_tested'}
+if ($vulkan) {
+    $evidence['bundled_runtime'] = @([ordered]@{path='vulkan-1.dll'; sha256=(Hash $loaderDll); sdk_version='1.4.363.0'; license='Apache-2.0'; fallback='cpu-max-threads'})
+}
+JsonFile $evidence (Join-Path $delivery 'build-evidence.json')
 $files = @(Get-ChildItem -LiteralPath $delivery -File -Recurse | Sort-Object FullName | ForEach-Object { [ordered]@{path=$_.FullName.Substring($delivery.Length+1).Replace('\','/'); bytes=$_.Length.ToString([Globalization.CultureInfo]::InvariantCulture); sha256=(Hash $_.FullName)} })
-JsonFile ([ordered]@{schema=1; component_id='whisper-stream'; version=$version; os='windows'; arch='amd64'; entry_type='executable'; entry='whisper-stream.exe'; packaging='native'; protocols=@('fengshen.whispercpp.stream/v1','--fengshen-stream-v1'); files=$files; runtime_dependencies=@(); model_refs=@('whisper-asr','whisper-vad'); driver_requirements=@('Windows x64 CPU'); build_inputs=$inputs; startup_report_ref='startup-report.json'}) (Join-Path $delivery 'manifest.json')
+JsonFile ([ordered]@{schema=1; component_id='whisper-stream'; version=$version; os='windows'; arch='amd64'; entry_type='executable'; entry='whisper-stream.exe'; packaging='native'; protocols=@('fengshen.whispercpp.stream/v1','--fengshen-stream-v1'); files=$files; runtime_dependencies=@(); model_refs=@('whisper-asr','whisper-vad'); driver_requirements=$(if ($vulkan) { @('Windows x64; Vulkan 1.2 driver optional, CPU fallback at max threads') } else { @('Windows x64 CPU') }); build_inputs=$inputs; startup_report_ref='startup-report.json'}) (Join-Path $delivery 'manifest.json')
 JsonFile ([ordered]@{schema=1; component_id='whisper-stream'; version=$version; manifest_sha256=(Hash (Join-Path $delivery 'manifest.json')); startup_test='passed'; metadata_only=@{arguments=@('--metadata'); exit_code=0; checked_at=[DateTime]::UtcNow.ToString('o'); no_model_load=$true; no_network=$true; no_compilation=$true}; clean_environment='not_verified'; protocol_evidence='declared_not_tested'; inference='not_tested'}) (Join-Path $delivery 'startup-report.json')
 # Report hashes are bound outside Manifest.Files, avoiding manifest/report cycles.
 JsonFile @{schema=1; files=@(@{path='manifest.json'; sha256=(Hash (Join-Path $delivery 'manifest.json'))}, @{path='startup-report.json'; sha256=(Hash (Join-Path $delivery 'startup-report.json'))})} (Join-Path $build 'delivery-index.json')
