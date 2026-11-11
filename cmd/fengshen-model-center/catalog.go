@@ -61,8 +61,12 @@ func catalog() []Model {
 			m.AllowedExtensions = []string{".gguf", ".safetensors", ".bin"}
 			m.Consumer = "独立 HTTP 服务（本版本接入入口已隐藏，服务未检测）"
 			if m.ID == "local-text" {
-				m.ComponentAlternatives = [][]string{{"qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf", "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"}}
-				m.Description += " 支持 Qwen2.5-7B-Instruct Q4_K_M 的精确两分片文件名，同一目录两份均非空才组成齐全；服务仍未检测。"
+				m.ComponentAlternatives = [][]string{
+					{"qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf", "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"},
+					{"qwen2.5-0.5b-instruct-q4_k_m.gguf"},
+					{"qwen2.5-1.5b-instruct-q4_k_m.gguf"},
+				}
+				m.Description += " 支持 Qwen2.5-7B-Instruct Q4_K_M 的精确两分片文件名，同一目录两份均非空才组成齐全；也支持单文件 Qwen2.5-0.5B-Instruct Q4_K_M（CPU 评分低延迟档），服务仍未检测。"
 			} else {
 				m.ComponentAlternatives = [][]string{
 					{"SmolVLM-500M-Instruct-Q8_0.gguf", "mmproj-SmolVLM-500M-Instruct-f16.gguf"},

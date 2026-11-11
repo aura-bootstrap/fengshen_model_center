@@ -25,7 +25,7 @@ const (
 	DeepSeekModel   = "deepseek-flash"
 
 	DefaultTimeoutSec = 120
-	MaxTimeoutSec     = 600
+	MaxTimeoutSec     = 1800
 	DefaultMaxRetries = 2
 )
 
@@ -173,7 +173,7 @@ func (c Config) Validate() error {
 		return newError(configErrorKind, 0, c.APIKey, message, nil)
 	}
 	if c.TimeoutSec <= 0 || c.TimeoutSec > MaxTimeoutSec {
-		return newError(configErrorKind, 0, c.APIKey, "timeout_sec must be between 1 and 600", nil)
+		return newError(configErrorKind, 0, c.APIKey, "timeout_sec must be between 1 and 1800", nil)
 	}
 	if c.MaxRetries < 0 || c.MaxRetries > 5 || c.RetryDelay < 0 {
 		return newError(configErrorKind, 0, c.APIKey, "retry settings are invalid", nil)
