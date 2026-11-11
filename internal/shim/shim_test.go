@@ -295,7 +295,9 @@ func haarXML(t *testing.T, name string) string {
 }
 
 func TestLlamaShimStartProxyStop(t *testing.T) {
+	var startedArgs []string
 	start := func(ctx context.Context, target string, args []string, lim Limits) (Child, error) {
+		startedArgs = append([]string(nil), args...)
 		port := 0
 		for i := 0; i+1 < len(args); i++ {
 			if args[i] == "--port" {
@@ -342,6 +344,15 @@ func TestLlamaShimStartProxyStop(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("start status=%d", resp.StatusCode)
+	}
+	ctxIndex := -1
+	for i := 0; i+1 < len(startedArgs); i++ {
+		if startedArgs[i] == "--ctx-size" {
+			ctxIndex = i
+		}
+	}
+	if ctxIndex < 0 || startedArgs[ctxIndex+1] != "32768" {
+		t.Fatalf("llama context must cover split statement prompts: %v", startedArgs)
 	}
 	for _, path := range []string{"/health", "/v1/chat/completions"} {
 		method := "GET"

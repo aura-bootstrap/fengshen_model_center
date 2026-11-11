@@ -51,7 +51,7 @@ func (s *Server) startLlama(w http.ResponseWriter, r *http.Request) {
 	}
 	args := []string{
 		"--host", "127.0.0.1", "--offline", "--no-webui", "--no-warmup",
-		"--parallel", "1", "--ctx-size", "8192", "--n-gpu-layers", "0",
+		"--parallel", "1", "--ctx-size", "32768", "--n-gpu-layers", "0",
 		"--threads", strconv.Itoa(llamaThreads()), "--no-mmproj-offload", "--model", req.Model,
 	}
 	if req.Vision {
