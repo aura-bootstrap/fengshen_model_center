@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -50,8 +51,8 @@ func (s *Server) startLlama(w http.ResponseWriter, r *http.Request) {
 	}
 	args := []string{
 		"--host", "127.0.0.1", "--offline", "--no-webui", "--no-warmup",
-		"--parallel", "1", "--ctx-size", "4096", "--n-gpu-layers", "0",
-		"--threads", "4", "--no-mmproj-offload", "--model", req.Model,
+		"--parallel", "1", "--ctx-size", "8192", "--n-gpu-layers", "0",
+		"--threads", strconv.Itoa(llamaThreads()), "--no-mmproj-offload", "--model", req.Model,
 	}
 	if req.Vision {
 		args = append(args, "--mmproj", req.MMProj)
@@ -85,6 +86,17 @@ func (s *Server) stopLlama(w http.ResponseWriter, r *http.Request) {
 	}
 	s.closeLlama()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
+}
+
+func llamaThreads() int {
+	n := runtime.NumCPU()
+	if n > 16 {
+		n = 16
+	}
+	if n < 4 {
+		n = 4
+	}
+	return n
 }
 
 func (s *Server) closeLlama() {
