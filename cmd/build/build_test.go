@@ -64,6 +64,22 @@ func TestWhisperStreamDeliveryDeclaresImplementedVAD(t *testing.T) {
 	}
 }
 
+func TestWhisperStreamDriverRequirementsStayArrays(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "external", "whisper", "stream", "build.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	for _, required := range []string{"$driverRequirements = @('Windows x64 CPU')", "$driverRequirements = @('Windows x64; Vulkan 1.2 driver optional, CPU fallback at max threads')", "driver_requirements=$driverRequirements"} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("single-element driver requirements must remain JSON arrays: %s", required)
+		}
+	}
+	if strings.Contains(source, "driver_requirements=$(") {
+		t.Fatal("PowerShell subexpression unwraps a single-element driver requirements array")
+	}
+}
+
 func TestWhisperBatchDeliveryContract(t *testing.T) {
 	root := filepath.Join("..", "..")
 	body, err := os.ReadFile(filepath.Join(root, "external", "whisper", "batch", "build.ps1"))

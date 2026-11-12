@@ -27,6 +27,8 @@ function Native([string]$Program, [string[]]$Arguments, [string]$Log) {
 $sourceCommit = '4979e04f5dcaccb36057e059bbaed8a2f5288315'
 $vulkan = $VulkanSdk -ne ''
 $version = $(if ($vulkan) { '4979e04-stream-v2-vulkan' } else { '4979e04-stream-v1' })
+$driverRequirements = @('Windows x64 CPU')
+if ($vulkan) { $driverRequirements = @('Windows x64; Vulkan 1.2 driver optional, CPU fallback at max threads') }
 $loaderDll = $null
 $loaderLicense = $null
 if ($vulkan) {
@@ -109,7 +111,7 @@ if ($vulkan) {
 }
 JsonFile $evidence (Join-Path $delivery 'build-evidence.json')
 $files = @(Get-ChildItem -LiteralPath $delivery -File -Recurse | Sort-Object FullName | ForEach-Object { [ordered]@{path=$_.FullName.Substring($delivery.Length+1).Replace('\','/'); bytes=$_.Length.ToString([Globalization.CultureInfo]::InvariantCulture); sha256=(Hash $_.FullName)} })
-JsonFile ([ordered]@{schema=1; component_id='whisper-stream'; version=$version; os='windows'; arch='amd64'; entry_type='executable'; entry='whisper-stream.exe'; packaging='native'; protocols=@('fengshen.whispercpp.stream/v1','--fengshen-stream-v1'); files=$files; runtime_dependencies=@(); model_refs=@('whisper-asr','whisper-vad'); driver_requirements=$(if ($vulkan) { @('Windows x64; Vulkan 1.2 driver optional, CPU fallback at max threads') } else { @('Windows x64 CPU') }); build_inputs=$inputs; startup_report_ref='startup-report.json'}) (Join-Path $delivery 'manifest.json')
+JsonFile ([ordered]@{schema=1; component_id='whisper-stream'; version=$version; os='windows'; arch='amd64'; entry_type='executable'; entry='whisper-stream.exe'; packaging='native'; protocols=@('fengshen.whispercpp.stream/v1','--fengshen-stream-v1'); files=$files; runtime_dependencies=@(); model_refs=@('whisper-asr','whisper-vad'); driver_requirements=$driverRequirements; build_inputs=$inputs; startup_report_ref='startup-report.json'}) (Join-Path $delivery 'manifest.json')
 JsonFile ([ordered]@{schema=1; component_id='whisper-stream'; version=$version; manifest_sha256=(Hash (Join-Path $delivery 'manifest.json')); startup_test='passed'; metadata_only=@{arguments=@('--metadata'); exit_code=0; checked_at=[DateTime]::UtcNow.ToString('o'); no_model_load=$true; no_network=$true; no_compilation=$true}; clean_environment='not_verified'; protocol_evidence='declared_not_tested'; inference='not_tested'}) (Join-Path $delivery 'startup-report.json')
 # Report hashes are bound outside Manifest.Files, avoiding manifest/report cycles.
 JsonFile @{schema=1; files=@(@{path='manifest.json'; sha256=(Hash (Join-Path $delivery 'manifest.json'))}, @{path='startup-report.json'; sha256=(Hash (Join-Path $delivery 'startup-report.json'))})} (Join-Path $build 'delivery-index.json')
