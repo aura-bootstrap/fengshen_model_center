@@ -116,6 +116,7 @@ func newManagerWithInstallRoot(root, store string, manifest modelmanifest.Manife
 		m.Close()
 		return nil, e
 	}
+	stabilizeRegistrationTimes(store, m.registrySnap, m.bindingStore.Snapshot())
 	m.componentSnapshot = cloneJSON(m.components.List())
 	return m, nil
 }
