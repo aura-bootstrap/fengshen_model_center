@@ -43,8 +43,8 @@ type Manifest struct {
 	Entries     []Entry `json:"entries"`
 }
 
-func DefaultPath(home string) string {
-	return filepath.Join(home, ".fengshen", "model_manifest.json")
+func DefaultPath(stateDir string) string {
+	return filepath.Join(stateDir, "model_manifest.json")
 }
 
 func Load(path string) (Manifest, []byte, error) {

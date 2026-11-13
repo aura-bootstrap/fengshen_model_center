@@ -5,10 +5,21 @@ set "ROOT=%~dp0.."
 for %%I in ("%ROOT%") do set "ROOT=%%~fI"
 set "BIN=%ROOT%\bin"
 set "CENTER=%BIN%\fengshen-model-center.exe"
-set "STATE_DIR=%USERPROFILE%\.fengshen"
+set "STATE_DIR=%ROOT%"
+if exist "%ROOT%\..\..\fengshen-engine.exe" for %%I in ("%ROOT%\..\..") do set "STATE_DIR=%%~fI"
+if defined FENGSHEN_STATE_DIR set "STATE_DIR=%FENGSHEN_STATE_DIR%"
+set "LOGDIR=%STATE_DIR%\logs"
+if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 set "PIDFILE=%STATE_DIR%\model_center.pid"
-set "OUTLOG=%STATE_DIR%\model_center.out.log"
-set "ERRLOG=%STATE_DIR%\model_center.err.log"
+set "OUTLOG=%LOGDIR%\model_center.out.log"
+set "ERRLOG=%LOGDIR%\model_center.err.log"
+
+rem Migrate pre-existing user-profile state (best-effort).
+set "LEGACY=%USERPROFILE%\.fengshen"
+call :migrate "%LEGACY%\model_center.pid" "%PIDFILE%"
+call :migrate "%LEGACY%\model_center.out.log" "%OUTLOG%"
+call :migrate "%LEGACY%\model_center.err.log" "%ERRLOG%"
+rmdir "%LEGACY%" 2>nul
 
 if not exist "%CENTER%" (
     echo [error] missing %CENTER%
@@ -43,7 +54,7 @@ if exist "%MANIFEST%" (
         exit /b 1
     )
     echo [info] generating user manifest from %MODEL_ROOT%
-    "%CENTER%" --write-model-manifest "%MODEL_ROOT%"
+    "%CENTER%" --state-dir "%STATE_DIR%" --write-model-manifest "%MODEL_ROOT%"
     if errorlevel 1 (
         echo [error] model manifest generation failed
         exit /b 1
@@ -57,7 +68,8 @@ set "FENGSHEN_LISTEN=%LISTEN%"
 set "FENGSHEN_OUTLOG=%OUTLOG%"
 set "FENGSHEN_ERRLOG=%ERRLOG%"
 set "FENGSHEN_PIDFILE=%PIDFILE%"
-powershell.exe -NoProfile -Command "$ErrorActionPreference='Stop'; $p = Start-Process -FilePath $env:FENGSHEN_CENTER -ArgumentList @('--root', $env:FENGSHEN_BIN, '--install-root', $env:FENGSHEN_BIN, '--root-kind', 'installed', '--listen', $env:FENGSHEN_LISTEN) -WorkingDirectory $env:FENGSHEN_BIN -WindowStyle Hidden -RedirectStandardOutput $env:FENGSHEN_OUTLOG -RedirectStandardError $env:FENGSHEN_ERRLOG -PassThru; Set-Content -LiteralPath $env:FENGSHEN_PIDFILE -Value $p.Id -Encoding ascii" >nul 2>nul
+set "FENGSHEN_STATE_DIR=%STATE_DIR%"
+powershell.exe -NoProfile -Command "$ErrorActionPreference='Stop'; $p = Start-Process -FilePath $env:FENGSHEN_CENTER -ArgumentList @('--root', $env:FENGSHEN_BIN, '--install-root', $env:FENGSHEN_BIN, '--root-kind', 'installed', '--listen', $env:FENGSHEN_LISTEN, '--state-dir', $env:FENGSHEN_STATE_DIR) -WorkingDirectory $env:FENGSHEN_BIN -WindowStyle Hidden -RedirectStandardOutput $env:FENGSHEN_OUTLOG -RedirectStandardError $env:FENGSHEN_ERRLOG -PassThru; Set-Content -LiteralPath $env:FENGSHEN_PIDFILE -Value $p.Id -Encoding ascii" >nul 2>nul
 set "CENTER_PID="
 if exist "%PIDFILE%" set /p "CENTER_PID="<"%PIDFILE%"
 if not defined CENTER_PID (
@@ -77,6 +89,11 @@ echo [info] pid file: %PIDFILE%
 echo [info] listen: http://%LISTEN%
 echo [info] logs: %OUTLOG%
 echo [info] stop: taskkill /T /F /PID %CENTER_PID%
+exit /b 0
+
+:migrate
+if not exist "%~1" exit /b 0
+if exist "%~2" (del /q "%~1" >nul 2>nul) else (move /y "%~1" "%~2" >nul 2>nul)
 exit /b 0
 
 :is_running

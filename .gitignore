@@ -11,6 +11,13 @@ config.json
 app.lock
 *.log
 
+# 状态目录产物（开发态落在仓库根）
+/model_manifest.json
+/model_center.pid
+/model-center/
+/model-center-integration/
+/logs/
+
 # 模型权重与运行环境不入库
 *.gguf
 *.ggml

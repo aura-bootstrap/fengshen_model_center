@@ -9,17 +9,16 @@ import (
 )
 
 func TestWriteModelManifestFromRoot(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("HOME", home)
+	stateDir := t.TempDir()
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "ggml-small.bin"), []byte("abc"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeModelManifest([]string{root}); err != nil {
+	target := modelmanifest.DefaultPath(stateDir)
+	if err := writeModelManifest([]string{root}, target); err != nil {
 		t.Fatal(err)
 	}
-	m, _, err := modelmanifest.Load(modelmanifest.DefaultPath(home))
+	m, _, err := modelmanifest.Load(target)
 	if err != nil {
 		t.Fatal(err)
 	}

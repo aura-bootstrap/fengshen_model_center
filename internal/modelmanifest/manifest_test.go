@@ -42,7 +42,7 @@ func writeJSON(t *testing.T, dir, name string, value any) string {
 }
 
 func TestDefaultPathAndEntryFilePath(t *testing.T) {
-	if got, want := DefaultPath(`C:\Users\fixture`), filepath.Join(`C:\Users\fixture`, ".fengshen", "model_manifest.json"); got != want {
+	if got, want := DefaultPath(`C:\Users\fixture`), filepath.Join(`C:\Users\fixture`, "model_manifest.json"); got != want {
 		t.Fatalf("DefaultPath=%q want=%q", got, want)
 	}
 	if got := (Entry{Path: "a", NewPath: "b"}).FilePath(); got != "a" {

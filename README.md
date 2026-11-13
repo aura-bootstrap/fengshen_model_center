@@ -50,7 +50,7 @@
 └─ docs/                        # 上游同步等说明
 ```
 
-`external/` 按场景存放不属于 Go 业务代码、也不在模型权重库中的构建输入与资源。模型权重仍只由 `%USERPROFILE%\.fengshen\model_manifest.json` 指向。
+`external/` 按场景存放不属于 Go 业务代码、也不在模型权重库中的构建输入与资源。模型权重仍只由状态目录下的 `model_manifest.json` 指向（安装态=客户端安装根，开发态=仓库根，`--state-dir`/`FENGSHEN_STATE_DIR` 可覆盖）。
 
 ## 构建
 
@@ -109,11 +109,11 @@ scripts\run.bat
 scripts\run.bat W:\model_root 127.0.0.1:18120
 ```
 
-`scripts\run.bat` 直接读取 `bin\fengshen-model-center.exe`，在后台启动并把中心 PID 写入 `%USERPROFILE%\.fengshen\model_center.pid`；输出写入同目录的 `model_center.out.log` / `model_center.err.log`。重复执行会检测已在运行的实例并直接返回。启动脚本不复制进 `bin\`。
+`scripts\run.bat` 直接读取 `bin\fengshen-model-center.exe`，在后台启动并把中心 PID 写入状态目录 `model_center.pid`；输出写入状态目录 `logs\model_center.out.log` / `model_center.err.log`。状态目录安装态为客户端安装根（`bin\model-center` 上两级），开发态为仓库根，`FENGSHEN_STATE_DIR` 可覆盖。重复执行会检测已在运行的实例并直接返回。启动脚本不复制进 `bin\`。
 
 停止服务：执行 `scripts\stop.bat`，它会读取 PID 文件并结束中心进程（含子进程），随后删除 PID 文件。
 
-用户目录数据不复制进 `bin\`：清单读取真实用户目录 `%USERPROFILE%\.fengshen\model_manifest.json`（仅当清单不存在时才用给定 `model_root` 生成），运行数据写入 `%APPDATA%\FengshenSlicer\model-center`。`model_root` 只读使用，不复制、不修改。重新安装会覆盖 `bin\` 根下的同名文件。
+状态数据不复制进 `bin\`：清单读取状态目录 `model_manifest.json`（仅当清单不存在时才用给定 `model_root` 生成），运行数据写入状态目录 `model-center\`。`model_root` 只读使用，不复制、不修改。重新安装会覆盖 `bin\` 根下的同名文件。
 
 ## 运行
 
@@ -127,14 +127,15 @@ scripts\run.bat W:\model_root 127.0.0.1:18120
 |---|---|
 | `--root` | 项目根或受控安装根；模型文件路径全部来自用户模型清单 |
 | `--root-kind` | `development`（默认）或 `installed` |
-| `--data` | 绑定存储目录，默认 `%AppData%\FengshenSlicer\model-center` |
+| `--state-dir` | 状态目录（清单、日志、运行数据）；默认安装态为客户端安装根、开发态为仓库根，`FENGSHEN_STATE_DIR` 可覆盖 |
+| `--data` | 绑定存储目录，默认 `<状态目录>\model-center` |
 | `--listen` | 仅本机回环监听地址，默认 `127.0.0.1:18120` |
 | `--integration-data` | 三端发现目录；空则不启用集成 |
 | `--install-root` | 安装态组件根目录前缀 |
 | `--component-root` | 组件根目录；空则使用 `<install-root>\model-center\components`（安装部署用；本地 `bin` 运行不传） |
 | `--component-info`、`--haar-component-info` | 仅输出元数据，不扫描、不加载模型 |
 
-开发态与安装态**只使用**用户模型清单 `%USERPROFILE%\.fengshen\model_manifest.json`（`entries`：`model_id` / `path` / `bytes` / `sha256`）。安装器在安装时调用中心生成该文件；开发和本地运行也使用同一文件，可手动执行 `fengshen-model-center.exe --write-model-manifest "D:\weights;D:\other"` 生成。中心按清单条目盘点与绑定，不再扫描目录，也不再使用 `registrations.json` 或 `resource-layout.json`。
+开发态与安装态**只使用**状态目录模型清单 `model_manifest.json`（`entries`：`model_id` / `path` / `bytes` / `sha256`）。安装器在安装时调用中心生成该文件；开发和本地运行也使用同一文件，可手动执行 `fengshen-model-center.exe --write-model-manifest "D:\weights;D:\other"` 生成。中心按清单条目盘点与绑定，不再扫描目录，也不再使用 `registrations.json` 或 `resource-layout.json`。
 
 ## 内部通信与隔离（HTTP/WS）
 
@@ -177,7 +178,7 @@ scripts\test.bat -MinFirstPartyCoverage 80 -MinPackageCoverage 50
 5. 生成 `build\full-test\coverage.html`；
 6. 构建契约；
 7. 检查 `bin\` 中已安装的中心与 shim（需先执行 `scripts\install.bat center`）；
-8. 读取 `%USERPROFILE%\.fengshen\model_center.pid`；若进程不存在则调用 `scripts\run.bat` 启动并重读 PID，然后通过 `/api/state`、`/api/report`、`/api/components` 做进程健康测试；
+8. 读取状态目录 `model_center.pid`；若进程不存在则调用 `scripts\run.bat` 启动并重读 PID，然后通过 `/api/state`、`/api/report`、`/api/components` 做进程健康测试；
 9. 运行 `tests/livecheck`：扫描全部清单模型，逐模型分页核对文件数、字节数和状态，校验 report 的 present/composition 汇总，并覆盖公开 API 与错误语义；默认只读元数据，`-VerifyHashes` 才读取全部权重做 SHA-256 校验。
 
 测试启动的实例会保留运行，不会在测试结束时停止。`-SkipProcess` 跳过第 8、9 步，`-SkipDeep` 只跳过第 9 步，`-VerifyHashes` 让第 9 步做全量哈希，`-SkipBuildContract` 跳过第 6 步。

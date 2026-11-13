@@ -28,8 +28,12 @@ type Client struct {
 
 func DefaultConfig() Config {
 	exe, _ := os.Executable()
-	base, _ := os.UserConfigDir()
-	return Config{InstallRoot: filepath.Dir(exe), Root: filepath.Dir(exe), RootKind: "installed", DataDir: filepath.Join(base, "FengshenSlicer", "model-center-integration")}
+	root := filepath.Dir(exe)
+	state := filepath.Dir(root)
+	if _, err := os.Stat(filepath.Join(state, "..", "..", "fengshen-engine.exe")); err == nil {
+		state = filepath.Clean(filepath.Join(state, "..", ".."))
+	}
+	return Config{InstallRoot: root, Root: root, RootKind: "installed", DataDir: filepath.Join(state, "model-center-integration")}
 }
 func NewClient(cfg Config) (*Client, error) {
 	if e := platformSupported(); e != nil {

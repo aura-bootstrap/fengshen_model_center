@@ -14,12 +14,7 @@ import (
 // writeModelManifest generates the single user manifest from model roots. A root
 // that already carries a hub manifest reuses its declared hashes; otherwise the
 // catalog recognition rules decide which files are weights.
-func writeModelManifest(roots []string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	target := modelmanifest.DefaultPath(home)
+func writeModelManifest(roots []string, target string) error {
 	var entries []modelmanifest.Entry
 	seen := map[string]bool{}
 	add := func(e modelmanifest.Entry) {

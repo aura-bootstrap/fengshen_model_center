@@ -1,7 +1,13 @@
 @echo off
 setlocal EnableExtensions
 
-set "PIDFILE=%USERPROFILE%\.fengshen\model_center.pid"
+set "ROOT=%~dp0.."
+for %%I in ("%ROOT%") do set "ROOT=%%~fI"
+set "STATE_DIR=%ROOT%"
+if exist "%ROOT%\..\..\fengshen-engine.exe" for %%I in ("%ROOT%\..\..") do set "STATE_DIR=%%~fI"
+if defined FENGSHEN_STATE_DIR set "STATE_DIR=%FENGSHEN_STATE_DIR%"
+set "PIDFILE=%STATE_DIR%\model_center.pid"
+if not exist "%PIDFILE%" set "PIDFILE=%USERPROFILE%\.fengshen\model_center.pid"
 
 set "CENTER_PID="
 if exist "%PIDFILE%" set /p "CENTER_PID="<"%PIDFILE%"

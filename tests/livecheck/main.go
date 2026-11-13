@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -122,9 +123,19 @@ func main() {
 	}
 }
 
+func defaultStateDir() string {
+	if env := strings.TrimSpace(os.Getenv("FENGSHEN_STATE_DIR")); env != "" {
+		return env
+	}
+	if exe, err := os.Executable(); err == nil {
+		return filepath.Dir(filepath.Dir(exe))
+	}
+	return "."
+}
+
 func run() error {
 	base := flag.String("base", "http://127.0.0.1:18120", "center base URL")
-	manifestPath := flag.String("manifest", "", "model manifest path (default ~/.fengshen/model_manifest.json)")
+	manifestPath := flag.String("manifest", "", "model manifest path (default <state-dir>/model_manifest.json)")
 	verifyHashes := flag.Bool("verify-hashes", false, "read and SHA-256 verify every model file")
 	hashModel := flag.String("hash-model", "", "only verify hashes for this model")
 	timeout := flag.Duration("timeout", 30*time.Minute, "operation timeout")
@@ -137,11 +148,7 @@ func run() error {
 		return fmt.Errorf("-hash-model requires -verify-hashes")
 	}
 	if *manifestPath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("resolve home directory: %w", err)
-		}
-		*manifestPath = modelmanifest.DefaultPath(home)
+		*manifestPath = modelmanifest.DefaultPath(defaultStateDir())
 	}
 	c := &client{base: strings.TrimRight(*base, "/"), http: &http.Client{Timeout: 60 * time.Second}}
 

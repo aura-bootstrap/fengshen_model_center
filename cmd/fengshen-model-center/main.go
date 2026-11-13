@@ -31,6 +31,7 @@ func main() {
 	integrationData := flag.String("integration-data", "", "独立发现目录；空则不启用三端只读集成")
 	installRoot := flag.String("install-root", "", "组件安装根目录")
 	componentRoot := flag.String("component-root", "", "组件根目录；空则使用安装根下的 model-center/components")
+	stateDir := flag.String("state-dir", "", "状态目录(清单/运行数据)；空则按 FENGSHEN_STATE_DIR 或可执行文件位置推导")
 	info := flag.Bool("component-info", false, "仅输出组件元数据，不扫描或加载模型")
 	haarInfo := flag.Bool("haar-component-info", false, "仅输出内嵌 Haar 组件元数据，不扫描或加载模型")
 	writeManifest := flag.String("write-model-manifest", "", "从分号分隔的模型根目录生成用户模型清单并退出")
@@ -53,17 +54,17 @@ func main() {
 		return
 	}
 	if *writeManifest != "" {
-		if err := writeModelManifest(splitRoots(*writeManifest)); err != nil {
+		if err := writeModelManifest(splitRoots(*writeManifest), modelmanifest.DefaultPath(resolveStateDir(*stateDir))); err != nil {
 			log.Fatal(err)
 		}
 		return
 	}
-	if err := run(*listen, *root, *rootKind, *data, *integrationData, *installRoot, *componentRoot); err != nil {
+	if err := run(*listen, *root, *rootKind, *data, *integrationData, *installRoot, *componentRoot, resolveStateDir(*stateDir)); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(listen, root, rootKind, data, integrationData, installRoot, componentRoot string) error {
+func run(listen, root, rootKind, data, integrationData, installRoot, componentRoot, stateDir string) error {
 	if err := validateListen(listen); err != nil {
 		return err
 	}
@@ -72,16 +73,10 @@ func run(listen, root, rootKind, data, integrationData, installRoot, componentRo
 		return err
 	}
 	if data == "" {
-		base, err := os.UserConfigDir()
-		if err != nil {
-			return err
-		}
-		data = filepath.Join(base, "FengshenSlicer", "model-center")
+		data = filepath.Join(stateDir, "model-center")
 	}
-	manifestPath := ""
-	if home, err := os.UserHomeDir(); err == nil {
-		manifestPath = modelmanifest.DefaultPath(home)
-	}
+	manifestPath := modelmanifest.DefaultPath(stateDir)
+	migrateLegacy(stateDir, manifestPath, data)
 	manifest, raw, manifestErr := modelmanifest.Load(manifestPath)
 	manifestRevision := modelmanifest.Revision(raw)
 	manifestError := ""

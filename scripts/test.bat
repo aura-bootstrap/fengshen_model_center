@@ -189,7 +189,9 @@ if not exist "%ROOT%\bin\fengshen-shim.exe" (
     exit /b 1
 )
 
-set "STATE_DIR=%USERPROFILE%\.fengshen"
+set "STATE_DIR=%ROOT%"
+if exist "%ROOT%\..\..\fengshen-engine.exe" for %%I in ("%ROOT%\..\..") do set "STATE_DIR=%%~fI"
+if defined FENGSHEN_STATE_DIR set "STATE_DIR=%FENGSHEN_STATE_DIR%"
 set "PIDFILE=%STATE_DIR%\model_center.pid"
 set "BASE=http://127.0.0.1:18120"
 set "STATE_FILE=%WORK%\state.json"
@@ -288,7 +290,7 @@ echo PASS: run.bat process health (pid %CENTER_PID%, state/report/components)
 if defined SKIP_DEEP goto deep_done
 echo.
 echo === deep model/API verification ===
-set "MANIFEST=%USERPROFILE%\.fengshen\model_manifest.json"
+set "MANIFEST=%STATE_DIR%\model_manifest.json"
 if defined VERIFY_HASHES (
     go run ./tests/livecheck -base "%BASE%" -manifest "%MANIFEST%" -verify-hashes
 ) else (
