@@ -50,7 +50,7 @@
 └─ docs/                        # 上游同步等说明
 ```
 
-`external/` 按场景存放不属于 Go 业务代码、也不在模型权重库中的构建输入与资源。模型权重仍只由状态目录下的 `model_manifest.json` 指向（安装态=客户端安装根，开发态=仓库根，`--state-dir`/`FENGSHEN_STATE_DIR` 可覆盖）。
+`external/` 按场景存放不属于 Go 业务代码、也不在模型权重库中的构建输入与资源。模型权重仍只由 `model_manifest.json` 指向：正常模式落三渠道 slicer 用户目录 `~/.fengshen/slicer/{user,dev,admin}/`（同步写、读首存在）；显式 `--state-dir`/`FENGSHEN_STATE_DIR`（沙盒隔离）时落状态目录。
 
 ## 构建
 
@@ -113,7 +113,7 @@ scripts\run.bat W:\model_root 127.0.0.1:18120
 
 停止服务：执行 `scripts\stop.bat`，它会读取 PID 文件并结束中心进程（含子进程），随后删除 PID 文件。
 
-状态数据不复制进 `bin\`：清单读取状态目录 `model_manifest.json`（仅当清单不存在时才用给定 `model_root` 生成），运行数据写入状态目录 `model-center\`。`model_root` 只读使用，不复制、不修改。重新安装会覆盖 `bin\` 根下的同名文件。
+状态数据不复制进 `bin\`：清单落三渠道用户目录（显式隔离时落状态目录；仅当清单不存在时才用给定 `model_root` 生成，启动时旧状态目录清单自动迁移），运行数据写入状态目录 `model-center\`。`model_root` 只读使用，不复制、不修改。重新安装会覆盖 `bin\` 根下的同名文件。
 
 ## 运行
 
@@ -127,7 +127,7 @@ scripts\run.bat W:\model_root 127.0.0.1:18120
 |---|---|
 | `--root` | 项目根或受控安装根；模型文件路径全部来自用户模型清单 |
 | `--root-kind` | `development`（默认）或 `installed` |
-| `--state-dir` | 状态目录（清单、日志、运行数据）；默认安装态为客户端安装根、开发态为仓库根，`FENGSHEN_STATE_DIR` 可覆盖 |
+| `--state-dir` | 状态目录（日志、运行数据）；默认安装态为客户端安装根、开发态为仓库根，`FENGSHEN_STATE_DIR` 可覆盖；显式指定时清单也落这里（隔离模式） |
 | `--data` | 绑定存储目录，默认 `<状态目录>\model-center` |
 | `--listen` | 仅本机回环监听地址，默认 `127.0.0.1:18120` |
 | `--integration-data` | 三端发现目录；空则不启用集成 |
@@ -135,7 +135,7 @@ scripts\run.bat W:\model_root 127.0.0.1:18120
 | `--component-root` | 组件根目录；空则使用 `<install-root>\model-center\components`（安装部署用；本地 `bin` 运行不传） |
 | `--component-info`、`--haar-component-info` | 仅输出元数据，不扫描、不加载模型 |
 
-开发态与安装态**只使用**状态目录模型清单 `model_manifest.json`（`entries`：`model_id` / `path` / `bytes` / `sha256`）。安装器在安装时调用中心生成该文件；开发和本地运行也使用同一文件，可手动执行 `fengshen-model-center.exe --write-model-manifest "D:\weights;D:\other"` 生成。中心按清单条目盘点与绑定，不再扫描目录，也不再使用 `registrations.json` 或 `resource-layout.json`。
+开发态与安装态使用模型清单 `model_manifest.json`（`entries`：`model_id` / `path` / `bytes` / `sha256`），落 `~/.fengshen/slicer/{user,dev,admin}/`——中心同时服务三渠道，写时三目录同步、读按 user→dev→admin 取首存在；显式 `--state-dir`/`FENGSHEN_STATE_DIR` 时落状态目录。安装器在安装时调用中心生成该文件；开发和本地运行也使用同一文件，可手动执行 `fengshen-model-center.exe --write-model-manifest "D:\weights;D:\other"` 生成。中心按清单条目盘点与绑定，不再扫描目录，也不再使用 `registrations.json` 或 `resource-layout.json`。
 
 ## 内部通信与隔离（HTTP/WS）
 

@@ -291,6 +291,7 @@ if defined SKIP_DEEP goto deep_done
 echo.
 echo === deep model/API verification ===
 set "MANIFEST=%STATE_DIR%\model_manifest.json"
+if not defined FENGSHEN_STATE_DIR for %%C in (admin dev user) do if exist "%USERPROFILE%\.fengshen\slicer\%%C\model_manifest.json" set "MANIFEST=%USERPROFILE%\.fengshen\slicer\%%C\model_manifest.json"
 if defined VERIFY_HASHES (
     go run ./tests/livecheck -base "%BASE%" -manifest "%MANIFEST%" -verify-hashes
 ) else (

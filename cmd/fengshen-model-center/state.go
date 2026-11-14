@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/aura-bootstrap/fengshen_model_center/internal/modelmanifest"
 )
 
 // resolveStateDir anchors center state (manifest/runtime data) to the client
@@ -36,6 +38,68 @@ func resolveStateDir(override string) string {
 		return wd
 	}
 	return "."
+}
+
+// stateDirExplicit reports whether the operator pinned the state dir (sandbox
+// or per-instance isolation). Normal runs anchor the manifest to the slicer
+// channel config roots; explicit runs stay self-contained.
+func stateDirExplicit(override string) bool {
+	return override != "" || strings.TrimSpace(os.Getenv("FENGSHEN_STATE_DIR")) != ""
+}
+
+// manifestTargets lists manifest landing paths in read priority order. The
+// center serves all three slicer channels, so normal mode keeps one synced copy
+// per channel config root (~/.fengshen/slicer/<ch>).
+func manifestTargets(stateDir string, explicit bool) []string {
+	if explicit {
+		return []string{modelmanifest.DefaultPath(stateDir)}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return []string{modelmanifest.DefaultPath(stateDir)}
+	}
+	var targets []string
+	for _, ch := range []string{"user", "dev", "admin"} {
+		targets = append(targets, filepath.Join(home, ".fengshen", "slicer", ch, "model_manifest.json"))
+	}
+	return targets
+}
+
+// loadManifestSynced loads the first existing manifest among targets (legacy
+// state-dir copy as fallback) and mirrors it to every target. The deprecated
+// state-dir copy is removed once all targets hold the same content.
+func loadManifestSynced(targets []string, legacy string) (string, modelmanifest.Manifest, []byte, error) {
+	candidates := targets
+	if legacy != targets[0] {
+		candidates = append(append([]string{}, targets...), legacy)
+	}
+	for _, path := range candidates {
+		if _, err := os.Lstat(path); err != nil {
+			continue
+		}
+		m, raw, err := modelmanifest.Load(path)
+		if err != nil {
+			return path, m, raw, err
+		}
+		synced := true
+		for _, target := range targets {
+			if target == path {
+				continue
+			}
+			if cur, err := os.ReadFile(target); err == nil && string(cur) == string(raw) {
+				continue
+			}
+			if err := modelmanifest.WriteBytes(target, raw); err != nil {
+				synced = false
+			}
+		}
+		if synced && legacy != targets[0] {
+			_ = os.Remove(legacy)
+		}
+		return path, m, raw, nil
+	}
+	m, raw, err := modelmanifest.Load(targets[0])
+	return targets[0], m, raw, err
 }
 
 // migrateLegacy moves pre-existing user-profile state into the install-dir

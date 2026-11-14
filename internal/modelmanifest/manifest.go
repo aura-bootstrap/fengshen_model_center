@@ -106,6 +106,12 @@ func Write(path string, m Manifest) error {
 		return err
 	}
 	raw = append(raw, '\n')
+	return WriteBytes(path, raw)
+}
+
+// WriteBytes atomically stores an already-serialized manifest verbatim so
+// synced copies stay byte-identical.
+func WriteBytes(path string, raw []byte) error {
 	if len(raw) > MaxBytes {
 		return errors.New("model_manifest_invalid: 超出大小限制")
 	}

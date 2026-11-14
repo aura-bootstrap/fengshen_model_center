@@ -15,14 +15,17 @@ func TestWriteModelManifestFromRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := modelmanifest.DefaultPath(stateDir)
-	if err := writeModelManifest([]string{root}, target); err != nil {
+	mirror := filepath.Join(t.TempDir(), "model_manifest.json")
+	if err := writeModelManifest([]string{root}, []string{target, mirror}); err != nil {
 		t.Fatal(err)
 	}
-	m, _, err := modelmanifest.Load(target)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(m.Entries) != 1 || m.Entries[0].ModelID != "whisper-asr" || m.Entries[0].Bytes != 3 {
-		t.Fatalf("manifest=%+v", m)
+	for _, path := range []string{target, mirror} {
+		m, _, err := modelmanifest.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(m.Entries) != 1 || m.Entries[0].ModelID != "whisper-asr" || m.Entries[0].Bytes != 3 {
+			t.Fatalf("manifest=%+v", m)
+		}
 	}
 }

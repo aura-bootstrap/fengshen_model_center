@@ -44,9 +44,11 @@ exit /b 0
 :start_center
 if exist "%PIDFILE%" del /q "%PIDFILE%" >nul 2>nul
 
-set "MANIFEST=%STATE_DIR%\model_manifest.json"
-if exist "%MANIFEST%" (
-    echo [info] user manifest: %MANIFEST%
+set "MANIFEST_FOUND="
+for %%C in (user dev admin) do if exist "%USERPROFILE%\.fengshen\slicer\%%C\model_manifest.json" set "MANIFEST_FOUND=1"
+if exist "%STATE_DIR%\model_manifest.json" set "MANIFEST_FOUND=1"
+if defined MANIFEST_FOUND (
+    echo [info] user manifest present
 ) else (
     if not exist "%MODEL_ROOT%\" (
         echo [error] user manifest not found and model root not found: %MODEL_ROOT%
@@ -54,7 +56,7 @@ if exist "%MANIFEST%" (
         exit /b 1
     )
     echo [info] generating user manifest from %MODEL_ROOT%
-    "%CENTER%" --state-dir "%STATE_DIR%" --write-model-manifest "%MODEL_ROOT%"
+    "%CENTER%" --write-model-manifest "%MODEL_ROOT%"
     if errorlevel 1 (
         echo [error] model manifest generation failed
         exit /b 1
@@ -68,8 +70,7 @@ set "FENGSHEN_LISTEN=%LISTEN%"
 set "FENGSHEN_OUTLOG=%OUTLOG%"
 set "FENGSHEN_ERRLOG=%ERRLOG%"
 set "FENGSHEN_PIDFILE=%PIDFILE%"
-set "FENGSHEN_STATE_DIR=%STATE_DIR%"
-powershell.exe -NoProfile -Command "$ErrorActionPreference='Stop'; $p = Start-Process -FilePath $env:FENGSHEN_CENTER -ArgumentList @('--root', $env:FENGSHEN_BIN, '--install-root', $env:FENGSHEN_BIN, '--root-kind', 'installed', '--listen', $env:FENGSHEN_LISTEN, '--state-dir', $env:FENGSHEN_STATE_DIR) -WorkingDirectory $env:FENGSHEN_BIN -WindowStyle Hidden -RedirectStandardOutput $env:FENGSHEN_OUTLOG -RedirectStandardError $env:FENGSHEN_ERRLOG -PassThru; Set-Content -LiteralPath $env:FENGSHEN_PIDFILE -Value $p.Id -Encoding ascii" >nul 2>nul
+powershell.exe -NoProfile -Command "$ErrorActionPreference='Stop'; $a = @('--root', $env:FENGSHEN_BIN, '--install-root', $env:FENGSHEN_BIN, '--root-kind', 'installed', '--listen', $env:FENGSHEN_LISTEN); if ($env:FENGSHEN_STATE_DIR) { $a += @('--state-dir', $env:FENGSHEN_STATE_DIR) }; $p = Start-Process -FilePath $env:FENGSHEN_CENTER -ArgumentList $a -WorkingDirectory $env:FENGSHEN_BIN -WindowStyle Hidden -RedirectStandardOutput $env:FENGSHEN_OUTLOG -RedirectStandardError $env:FENGSHEN_ERRLOG -PassThru; Set-Content -LiteralPath $env:FENGSHEN_PIDFILE -Value $p.Id -Encoding ascii" >nul 2>nul
 set "CENTER_PID="
 if exist "%PIDFILE%" set /p "CENTER_PID="<"%PIDFILE%"
 if not defined CENTER_PID (

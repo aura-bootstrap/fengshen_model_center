@@ -133,9 +133,23 @@ func defaultStateDir() string {
 	return "."
 }
 
+func defaultManifestPath() string {
+	if strings.TrimSpace(os.Getenv("FENGSHEN_STATE_DIR")) == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			for _, ch := range []string{"user", "dev", "admin"} {
+				p := filepath.Join(home, ".fengshen", "slicer", ch, "model_manifest.json")
+				if _, err := os.Stat(p); err == nil {
+					return p
+				}
+			}
+		}
+	}
+	return modelmanifest.DefaultPath(defaultStateDir())
+}
+
 func run() error {
 	base := flag.String("base", "http://127.0.0.1:18120", "center base URL")
-	manifestPath := flag.String("manifest", "", "model manifest path (default <state-dir>/model_manifest.json)")
+	manifestPath := flag.String("manifest", "", "model manifest path (default: first existing channel config root, else <state-dir>/model_manifest.json)")
 	verifyHashes := flag.Bool("verify-hashes", false, "read and SHA-256 verify every model file")
 	hashModel := flag.String("hash-model", "", "only verify hashes for this model")
 	timeout := flag.Duration("timeout", 30*time.Minute, "operation timeout")
@@ -148,7 +162,7 @@ func run() error {
 		return fmt.Errorf("-hash-model requires -verify-hashes")
 	}
 	if *manifestPath == "" {
-		*manifestPath = modelmanifest.DefaultPath(defaultStateDir())
+		*manifestPath = defaultManifestPath()
 	}
 	c := &client{base: strings.TrimRight(*base, "/"), http: &http.Client{Timeout: 60 * time.Second}}
 

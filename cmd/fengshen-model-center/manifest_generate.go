@@ -11,10 +11,11 @@ import (
 	"github.com/aura-bootstrap/fengshen_model_center/internal/modelmanifest"
 )
 
-// writeModelManifest generates the single user manifest from model roots. A root
-// that already carries a hub manifest reuses its declared hashes; otherwise the
-// catalog recognition rules decide which files are weights.
-func writeModelManifest(roots []string, target string) error {
+// writeModelManifest generates the user manifest from model roots and writes it
+// to every target. A root that already carries a hub manifest reuses its
+// declared hashes; otherwise the catalog recognition rules decide which files
+// are weights.
+func writeModelManifest(roots []string, targets []string) error {
 	var entries []modelmanifest.Entry
 	seen := map[string]bool{}
 	add := func(e modelmanifest.Entry) {
@@ -81,10 +82,12 @@ func writeModelManifest(roots []string, target string) error {
 		return fmt.Errorf("未能在指定目录识别到模型权重")
 	}
 	m := modelmanifest.Manifest{Schema: 1, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Root: roots[0], Entries: entries}
-	if err := modelmanifest.Write(target, m); err != nil {
-		return err
+	for _, target := range targets {
+		if err := modelmanifest.Write(target, m); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "已写入 %s（%s 条，%s 字节）\n", target, strconv.Itoa(len(entries)), strconv.FormatInt(totalBytes(entries), 10))
 	}
-	fmt.Fprintf(os.Stderr, "已写入 %s（%s 条，%s 字节）\n", target, strconv.Itoa(len(entries)), strconv.FormatInt(totalBytes(entries), 10))
 	return nil
 }
 
