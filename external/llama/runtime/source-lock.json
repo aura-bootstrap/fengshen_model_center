@@ -12,6 +12,11 @@
       "version": "b12182-fengshen2-cpu-avx2",
       "backend": "CPU SSE4.2 + BMI2 + AVX + AVX2 + FMA + F16C; no native tuning, OpenMP, RPC, dynamic backends, OpenSSL or subprocess",
       "driver_requirements": ["Windows x64 CPU with SSE4.2, BMI2, AVX, AVX2, FMA and F16C; OS XSAVE with XMM/YMM state enabled; GPU not required"]
+    },
+    "vulkan": {
+      "version": "b12182-fengshen3-vulkan",
+      "backend": "Vulkan GPU full offload + CPU SSE4.2/BMI2/AVX/AVX2/FMA/F16C fallback; no native tuning, OpenMP, RPC, dynamic backends, OpenSSL or subprocess",
+      "driver_requirements": ["Windows x64 CPU with SSE4.2, BMI2, AVX, AVX2, FMA and F16C; OS XSAVE with XMM/YMM state enabled; Vulkan 1.2 driver optional, CPU fallback at AVX2"]
     }
   },
   "upstream": "https://github.com/ggml-org/llama.cpp",

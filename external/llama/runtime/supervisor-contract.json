@@ -6,7 +6,7 @@
   "port": "supervisor allocates a new exclusive port; never 11434; never reuse external service",
   "authentication": "none: the server is bound to 127.0.0.1 and accepts unauthenticated local calls",
   "environment": "supervisor builds a minimal environment; reject inherited LLAMA_*, HF_*, proxy variables and backend search paths",
-  "fixed_arguments": ["--host", "127.0.0.1", "--offline", "--no-webui", "--no-warmup", "--parallel", "1", "--ctx-size", "4096", "--n-gpu-layers", "0", "--threads", "4", "--no-mmproj-offload"],
+  "fixed_arguments": ["--host", "127.0.0.1", "--offline", "--no-webui", "--no-warmup", "--parallel", "1", "--ctx-size", "32768", "--n-gpu-layers", "999", "--threads", "16", "--no-mmproj-offload"],
   "binding_arguments": {
     "--port": "validated exclusive non-11434 port",
     "--model": "explicit verified read-only model binding, complete shard group",

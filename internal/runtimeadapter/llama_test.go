@@ -211,7 +211,7 @@ func TestLlamaAVX2Registers(t *testing.T) {
 
 func TestLlamaPlanCPURejectsBeforeBinary(t *testing.T) {
 	_, _, r, _ := llamaCacheExecutor(t)
-	for _, version := range []string{"b12182-fengshen2-cpu-avx2", "b12182-fengshen2-cpu", "unknown"} {
+	for _, version := range []string{"b12182-fengshen2-cpu-avx2", "b12182-fengshen3-vulkan", "b12182-fengshen2-cpu", "unknown"} {
 		r.Manifest.Version = version
 		r.Binding.Component.Version = version
 		calls := 0
@@ -219,7 +219,7 @@ func TestLlamaPlanCPURejectsBeforeBinary(t *testing.T) {
 		if !errors.Is(err, errLlamaBinding) || b != (runtimeprocess.VerifiedBinary{}) || args != nil {
 			t.Fatalf("version %q not rejected before binary: %v", version, err)
 		}
-		if (calls == 1) != (version == "b12182-fengshen2-cpu-avx2") {
+		if (calls == 1) != (version == "b12182-fengshen2-cpu-avx2" || version == "b12182-fengshen3-vulkan") {
 			t.Fatalf("unexpected CPU probe count %d for %s", calls, version)
 		}
 	}
@@ -233,6 +233,19 @@ func TestLlamaPlanCPURejectsBeforeBinary(t *testing.T) {
 	if _, _, err := llamaPlanWithCPU(*r, false, func() bool { t.Fatal("baseline probed AVX2"); return false }); err != nil {
 		t.Fatal(err)
 	}
+	r.Manifest.Version = "b12182-fengshen3-vulkan"
+	r.Binding.Component.Version = r.Manifest.Version
+	r.Binding.Device = "vulkan"
+	if _, args, err := llamaPlanWithCPU(*r, false, func() bool { return true }); err != nil || len(args) == 0 {
+		t.Fatalf("vulkan profile with AVX2 host rejected: %v", err)
+	}
+	if _, _, err := llamaPlanWithCPU(*r, false, func() bool { return false }); !errors.Is(err, errLlamaBinding) {
+		t.Fatalf("vulkan profile without AVX2 host accepted: %v", err)
+	}
+	r.Binding.Device = "cpu"
+	if _, _, err := llamaPlanWithCPU(*r, false, func() bool { return true }); !errors.Is(err, errLlamaBinding) {
+		t.Fatalf("vulkan profile bound to cpu device accepted: %v", err)
+	}
 }
 
 func TestLlamaHostCPUProbe(t *testing.T) {
@@ -240,12 +253,17 @@ func TestLlamaHostCPUProbe(t *testing.T) {
 }
 
 func TestLlamaVersionGate(t *testing.T) {
-	for _, version := range []string{"b12182-fengshen1-cpu", "b12182-fengshen2-cpu-avx2", "", "b12182-fengshen2-cpu", "b12182-fengshen2-cpu-avx2-extra"} {
+	for _, version := range []string{"b12182-fengshen1-cpu", "b12182-fengshen2-cpu-avx2", "b12182-fengshen3-vulkan", "", "b12182-fengshen2-cpu", "b12182-fengshen2-cpu-avx2-extra"} {
 		for _, supported := range []bool{false, true} {
-			want := version == "b12182-fengshen1-cpu" || version == "b12182-fengshen2-cpu-avx2" && supported
+			want := version == "b12182-fengshen1-cpu" || (version == "b12182-fengshen2-cpu-avx2" || version == "b12182-fengshen3-vulkan") && supported
 			if got := llamaVersionCompatible(version, supported); got != want {
 				t.Fatalf("version=%q supported=%v got=%v", version, supported, got)
 			}
+		}
+	}
+	for version, device := range map[string]string{"b12182-fengshen1-cpu": "cpu", "b12182-fengshen2-cpu-avx2": "cpu", "b12182-fengshen3-vulkan": "vulkan", "unknown": ""} {
+		if got := llamaVersionDevice(version); got != device {
+			t.Fatalf("version=%q device=%q want=%q", version, got, device)
 		}
 	}
 }

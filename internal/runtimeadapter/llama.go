@@ -324,7 +324,7 @@ func llamaBindingPlan(r Resolved, vision bool, avx2 func() bool) (runtimeprocess
 	if r.Binding.Component.Protocol != domain.CenterLlamaProtocol || !declared {
 		return runtimeprocess.VerifiedBinary{}, "", "", errors.New("center_protocol_unsupported")
 	}
-	if components.Validate(m) != nil || m.ComponentID != "llama-runtime" || !llamaVersionCompatible(m.Version, m.Version == "b12182-fengshen2-cpu-avx2" && avx2()) || m.OS != "windows" || m.Arch != "amd64" || m.Packaging != "native" || r.Binding.Device != "cpu" || r.Binding.Component.ID != m.ComponentID || r.Binding.Component.Version != m.Version {
+	if components.Validate(m) != nil || m.ComponentID != "llama-runtime" || !llamaVersionCompatible(m.Version, (m.Version == "b12182-fengshen2-cpu-avx2" || m.Version == "b12182-fengshen3-vulkan") && avx2()) || m.OS != "windows" || m.Arch != "amd64" || m.Packaging != "native" || r.Binding.Device != llamaVersionDevice(m.Version) || r.Binding.Component.ID != m.ComponentID || r.Binding.Component.Version != m.Version {
 		return runtimeprocess.VerifiedBinary{}, "", "", errLlamaBinding
 	}
 	locked := false

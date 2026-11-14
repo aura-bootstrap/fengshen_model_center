@@ -11,7 +11,7 @@ int main(int argc, char ** argv) {
     std::puts("{\"schema\":1,\"component_id\":\"llama-runtime\",\"version\":\"" LLAMA_COMPONENT_VERSION
         "\",\"profile\":\"" LLAMA_COMPONENT_PROFILE "\",\"driver_requirements\":[\"" LLAMA_COMPONENT_DRIVER
         "\"],\"upstream_commit\":\"fd27b2034905f8dadd8bd6d2cc44595f4929d391\",\"binary_source\":\"source-build\","
-        "\"platform\":\"windows-amd64-cpu\",\"server\":\"internal/llama-server.exe\","
+        "\"platform\":\"" LLAMA_COMPONENT_PLATFORM "\",\"server\":\"internal/llama-server.exe\","
         "\"capabilities\":[\"text\",\"vision-explicit-projector\"],\"protocols\":[\"llama.cpp.server.http/b12182\"],"
         "\"metadata_only\":true,\"inference\":\"not_tested\"}");
     return 0;

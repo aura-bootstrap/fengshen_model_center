@@ -1,7 +1,9 @@
 param(
     [Parameter(Mandatory=$true)][string]$SourceArchive,
     [Parameter(Mandatory=$true)][string]$BuildDirectory,
-    [ValidateSet('baseline','avx2')][string]$Profile = 'baseline'
+    [ValidateSet('baseline','avx2','vulkan')][string]$Profile = 'baseline',
+    [string]$VulkanSdk = '',
+    [string]$SpirvHeaders = ''
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -18,6 +20,31 @@ $selected = $lock.profiles.$Profile
 $lock.version = $selected.version
 $lock | Add-Member -NotePropertyName profile -NotePropertyValue $Profile
 $lock | Add-Member -NotePropertyName driver_requirements -NotePropertyValue @($selected.driver_requirements)
+$vulkan = $Profile -eq 'vulkan'
+if ($vulkan) { $lock.platform = 'windows-amd64-vulkan' }
+$platform = $lock.platform
+$loaderDll = $null
+$loaderLicense = $null
+$spirvConfig = $null
+$spirvHeader = $null
+$spirvLicense = $null
+if ($vulkan) {
+    if ($VulkanSdk -notmatch '^[A-Za-z]:[\\/]') { throw 'VulkanSdk must be absolute' }
+    $VulkanSdk = [IO.Path]::GetFullPath($VulkanSdk).TrimEnd('\','/')
+    $loaderDll = Join-Path $VulkanSdk 'Bin\vulkan-1.dll'
+    $loaderLicense = Join-Path $VulkanSdk 'Share\Licenses\Vulkan-Loader-LICENSE.txt'
+    foreach ($p in @((Join-Path $VulkanSdk 'Include\vulkan\vulkan.h'), (Join-Path $VulkanSdk 'Lib\vulkan-1.lib'), (Join-Path $VulkanSdk 'Bin\glslc.exe'), $loaderDll, $loaderLicense)) {
+        if (-not (Test-Path -LiteralPath $p)) { throw "Vulkan SDK artifact missing: $p" }
+    }
+    if ($SpirvHeaders -notmatch '^[A-Za-z]:[\\/]') { throw 'SpirvHeaders must be absolute' }
+    $SpirvHeaders = [IO.Path]::GetFullPath($SpirvHeaders).TrimEnd('\','/')
+    $spirvConfig = Join-Path $SpirvHeaders 'share\cmake\SPIRV-Headers\SPIRV-HeadersConfig.cmake'
+    $spirvHeader = Join-Path $SpirvHeaders 'include\spirv\unified1\spirv.hpp'
+    $spirvLicense = Join-Path $SpirvHeaders 'LICENSE'
+    foreach ($p in @($spirvConfig, $spirvHeader, $spirvLicense)) {
+        if (-not (Test-Path -LiteralPath $p)) { throw "SPIRV-Headers artifact missing: $p" }
+    }
+}
 function Hash([string]$p) { (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() }
 function JsonFile($value, [string]$p) { [IO.File]::WriteAllText($p, ($value | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false))) }
 function Native([string]$Program, [string[]]$Arguments, [string]$Log, [int]$ExpectedExit = 0) {
@@ -42,13 +69,17 @@ Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-ar
 $cmake = Join-Path $vs 'Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe'
 $ninja = Join-Path $vs 'Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe'
 $obj = Join-Path $build 'obj'
-$null = Native $cmake @('-S', $entry, '-B', $obj, '-G', 'Ninja', "-DCMAKE_MAKE_PROGRAM=$ninja", '-DCMAKE_BUILD_TYPE=Release', "-DLLAMA_SOURCE_DIR=$source", "-DLLAMA_RUNTIME_PROFILE=$Profile") (Join-Path $build 'configure.log')
+if ($vulkan) { $env:VULKAN_SDK = $VulkanSdk }
+$configureArgs = @('-S', $entry, '-B', $obj, '-G', 'Ninja', "-DCMAKE_MAKE_PROGRAM=$ninja", '-DCMAKE_BUILD_TYPE=Release', "-DLLAMA_SOURCE_DIR=$source", "-DLLAMA_RUNTIME_PROFILE=$Profile")
+if ($vulkan) { $configureArgs += "-DSPIRV-Headers_DIR=$(Split-Path $spirvConfig -Parent)" }
+$null = Native $cmake $configureArgs (Join-Path $build 'configure.log')
 $null = Native $cmake @('--build', $obj, '--target', 'llama-runtime', 'llama-server', '-j', '4') (Join-Path $build 'compile.log')
 $delivery = Join-Path $build ('components/llama-runtime/' + $lock.version)
 $internal = Join-Path $delivery 'internal'
 New-Item -ItemType Directory -Path $internal -Force | Out-Null
 Copy-Item (Join-Path $obj 'llama-runtime.exe') $delivery
 Copy-Item (Join-Path $obj 'bin/llama-server.exe') $internal
+if ($vulkan) { Copy-Item -LiteralPath $loaderDll -Destination $internal }
 JsonFile $lock (Join-Path $delivery 'source-lock.json')
 Copy-Item (Join-Path $entry 'supervisor-contract.json') $delivery
 $notices = Join-Path $delivery 'licenses'
@@ -57,7 +88,10 @@ Copy-Item (Join-Path $source 'LICENSE') (Join-Path $notices 'llama-LICENSE')
 Copy-Item (Join-Path $source 'licenses') (Join-Path $notices 'upstream') -Recurse
 # Preserve original bundled license texts, including notices embedded in header tails.
 Copy-Item (Join-Path $source 'vendor') (Join-Path $notices 'vendor') -Recurse
+if ($vulkan) { Copy-Item -LiteralPath $loaderLicense -Destination (Join-Path $notices 'Vulkan-Loader-LICENSE.txt') }
+if ($vulkan) { Copy-Item -LiteralPath $spirvLicense -Destination (Join-Path $notices 'SPIRV-Headers-LICENSE') }
 $dependencyEvidence = @()
+$sawVulkan = $false
 foreach ($exe in @((Join-Path $delivery 'llama-runtime.exe'), (Join-Path $internal 'llama-server.exe'))) {
     $imports = @(& dumpbin /nologo /dependents $exe)
     if ($LASTEXITCODE -ne 0) { throw 'dumpbin dependency audit failed' }
@@ -65,10 +99,12 @@ foreach ($exe in @((Join-Path $delivery 'llama-runtime.exe'), (Join-Path $intern
     foreach ($line in $imports) {
         if ($line -match '^\s+([A-Za-z0-9_.-]+\.dll)\s*$') {
             $dll = $Matches[1]
+            if ($dll -eq 'vulkan-1.dll') { $sawVulkan = $true; if ($vulkan) { continue } }
             if ($dll -notmatch '^(KERNEL32|ADVAPI32|WS2_32|CRYPT32|BCRYPT|USER32|SHELL32|OLE32|SHLWAPI|MSVCRT|NTDLL|IPHLPAPI)\.dll$' -and $dll -notmatch '^api-ms-win-') { throw "Unclosed non-system DLL dependency: $dll" }
         }
     }
 }
+if ($vulkan -and -not $sawVulkan) { throw 'Vulkan build has no bundled loader dependency' }
 [IO.File]::WriteAllLines((Join-Path $delivery 'pe-dependencies.txt'), [string[]]$dependencyEvidence)
 $exe = Join-Path $delivery 'llama-runtime.exe'
 $metadata = @(& $exe --component-info)
@@ -80,7 +116,7 @@ if ($info.component_id -ne 'llama-runtime' -or $info.upstream_commit -ne $lock.c
 [IO.File]::WriteAllLines((Join-Path $delivery 'metadata-smoke.json'), [string[]]$metadata)
 $null = Native $exe @('--model', 'forbidden') (Join-Path $build 'rejected-cli.log') 64
 $server = Join-Path $internal 'llama-server.exe'
-# AVX2 server execution is gated by the runtime adapter, not metadata smoke.
+# AVX2/Vulkan server execution is gated by the runtime adapter, not metadata smoke.
 if ($Profile -eq 'baseline') {
     $versionOutput = Native $server @('--version') (Join-Path $delivery 'server-version.txt')
     if (($versionOutput -join ' ') -notmatch 'fd27b2034') { throw 'Built server version mismatch' }
@@ -91,7 +127,16 @@ $inputs = @([ordered]@{ name='llama.cpp-source'; version=$lock.commit; sha256=$l
 foreach ($p in @((Join-Path $entry 'component_info.cpp'), (Join-Path $entry 'component_profile.h.in'), (Join-Path $entry 'CMakeLists.txt'), (Join-Path $entry 'source-lock.json'), (Join-Path $entry 'supervisor-contract.json'), $PSCommandPath, $cmake, $ninja, (Get-Command cl.exe).Source, (Get-Command link.exe).Source)) {
     $inputs += [ordered]@{ name=[IO.Path]::GetFileName($p); version=$lock.version; sha256=(Hash $p); license=$(if ($p.StartsWith($vs, [StringComparison]::OrdinalIgnoreCase)) { 'Microsoft-toolchain-build-only' } else { 'project-source' }) }
 }
-$record = [ordered]@{ schema=1; binary_source='source-build'; upstream_binary_reused=$false; source_commit=$lock.commit; platform=$lock.platform; crt='static /MT'; version=$lock.version; profile=$Profile; driver_requirements=@($selected.driver_requirements); backend=$selected.backend; build_inputs=$inputs; compiler=($compilerOutput -join "`n"); model_load='not_tested'; text_inference='not_tested'; vision_inference='not_tested'; server_startup='not_tested'; clean_environment='not_verified' }
+if ($vulkan) {
+    foreach ($p in @($loaderDll, $loaderLicense, (Join-Path $VulkanSdk 'Include\vulkan\vulkan.h'), (Join-Path $VulkanSdk 'Lib\vulkan-1.lib'), (Join-Path $VulkanSdk 'Bin\glslc.exe'))) {
+        $inputs += [ordered]@{ name=[IO.Path]::GetFileName($p); version=$lock.version; sha256=(Hash $p); license='Apache-2.0' }
+    }
+    foreach ($p in @($spirvConfig, $spirvHeader, $spirvLicense)) {
+        $inputs += [ordered]@{ name=[IO.Path]::GetFileName($p); version='vulkan-sdk-1.4.363.0'; sha256=(Hash $p); license='MIT' }
+    }
+}
+$record = [ordered]@{ schema=1; binary_source='source-build'; upstream_binary_reused=$false; source_commit=$lock.commit; platform=$platform; crt='static /MT'; version=$lock.version; profile=$Profile; gpu_backend=$(if ($vulkan) { 'vulkan' } else { 'none' }); driver_requirements=@($selected.driver_requirements); backend=$selected.backend; build_inputs=$inputs; compiler=($compilerOutput -join "`n"); model_load='not_tested'; text_inference='not_tested'; vision_inference='not_tested'; server_startup='not_tested'; clean_environment='not_verified' }
+if ($vulkan) { $record['bundled_runtime'] = @([ordered]@{ path='internal/vulkan-1.dll'; sha256=(Hash $loaderDll); sdk_version='1.4.363.0'; license='Apache-2.0'; fallback='cpu-avx2' }) }
 JsonFile $record (Join-Path $delivery 'build-evidence.json')
 $files = @(Get-ChildItem $delivery -File -Recurse | Sort-Object FullName | ForEach-Object { [ordered]@{ path=$_.FullName.Substring($delivery.Length+1).Replace('\','/'); bytes=$_.Length.ToString([Globalization.CultureInfo]::InvariantCulture); sha256=(Hash $_.FullName) } })
 $manifest = [ordered]@{ schema=1; component_id='llama-runtime'; version=$lock.version; os='windows'; arch='amd64'; entry_type='executable'; entry='llama-runtime.exe'; packaging='native'; protocols=@('llama.cpp.server.http/b12182'); files=$files; runtime_dependencies=@(); model_refs=@('local-text','local-vision'); driver_requirements=@($selected.driver_requirements); build_inputs=$inputs; startup_report_ref='startup-report.json' }

@@ -4,10 +4,21 @@ func llamaVersionCompatible(version string, avx2 bool) bool {
 	switch version {
 	case "b12182-fengshen1-cpu":
 		return true
-	case "b12182-fengshen2-cpu-avx2":
+	case "b12182-fengshen2-cpu-avx2", "b12182-fengshen3-vulkan":
 		return avx2
 	default:
 		return false
+	}
+}
+
+func llamaVersionDevice(version string) string {
+	switch version {
+	case "b12182-fengshen1-cpu", "b12182-fengshen2-cpu-avx2":
+		return "cpu"
+	case "b12182-fengshen3-vulkan":
+		return "vulkan"
+	default:
+		return ""
 	}
 }
 

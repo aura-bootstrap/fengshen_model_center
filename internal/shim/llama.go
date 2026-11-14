@@ -44,14 +44,36 @@ func (s *Server) startLlama(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, componentprotocol.Fail("component_conflict"))
 		return
 	}
+	child, cancel, base, err := s.launchLlama(req, 999)
+	if err != nil && !errors.Is(err, errLlamaPort) {
+		// Full GPU offload did not become healthy; retry once entirely on CPU.
+		child, cancel, base, err = s.launchLlama(req, 0)
+	}
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, errLlamaPort) {
+			status = http.StatusServiceUnavailable
+		}
+		writeError(w, status, componentprotocol.Fail("component_failed"))
+		return
+	}
+	s.llamaChild, s.llamaCancel, s.llamaBase, s.llamaStarted = child, cancel, base, true
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "protocol": componentprotocol.LlamaHTTPv1})
+}
+
+var errLlamaPort = errors.New("shim: no llama port")
+
+// launchLlama starts one llama-server with the requested GPU layer count and
+// waits for health. The caller owns the returned child on success; on failure
+// the child is already closed and cancelled.
+func (s *Server) launchLlama(req componentprotocol.LlamaStartRequest, gpuLayers int) (Child, context.CancelFunc, string, error) {
 	port, err := freeLlamaPort()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, componentprotocol.Fail("component_failed"))
-		return
+		return nil, nil, "", errLlamaPort
 	}
 	args := []string{
 		"--host", "127.0.0.1", "--offline", "--no-webui", "--no-warmup",
-		"--parallel", "1", "--ctx-size", "32768", "--n-gpu-layers", "0",
+		"--parallel", "1", "--ctx-size", "32768", "--n-gpu-layers", strconv.Itoa(gpuLayers),
 		"--threads", strconv.Itoa(llamaThreads()), "--no-mmproj-offload", "--model", req.Model,
 	}
 	if req.Vision {
@@ -64,8 +86,7 @@ func (s *Server) startLlama(w http.ResponseWriter, r *http.Request) {
 	child, err := s.startChild(ctx, s.cfg.Target, args, Limits{In: 1, Out: 16 << 20, Err: 16 << 20, Buffer: 4 << 20})
 	if err != nil {
 		cancel()
-		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
-		return
+		return nil, nil, "", err
 	}
 	go func() { _, _ = io.Copy(io.Discard, child.Stdout()) }()
 	go func() { _, _ = io.Copy(io.Discard, child.Stderr()) }()
@@ -73,11 +94,9 @@ func (s *Server) startLlama(w http.ResponseWriter, r *http.Request) {
 	if err := waitLlamaHealth(ctx, base); err != nil {
 		_ = child.Close()
 		cancel()
-		writeError(w, http.StatusBadGateway, componentprotocol.Fail("component_failed"))
-		return
+		return nil, nil, "", err
 	}
-	s.llamaChild, s.llamaCancel, s.llamaBase, s.llamaStarted = child, cancel, base, true
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "protocol": componentprotocol.LlamaHTTPv1})
+	return child, cancel, base, nil
 }
 
 func (s *Server) stopLlama(w http.ResponseWriter, r *http.Request) {

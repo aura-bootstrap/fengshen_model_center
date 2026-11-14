@@ -354,6 +354,15 @@ func TestLlamaShimStartProxyStop(t *testing.T) {
 	if ctxIndex < 0 || startedArgs[ctxIndex+1] != "32768" {
 		t.Fatalf("llama context must cover split statement prompts: %v", startedArgs)
 	}
+	gpuIndex := -1
+	for i := 0; i+1 < len(startedArgs); i++ {
+		if startedArgs[i] == "--n-gpu-layers" {
+			gpuIndex = i
+		}
+	}
+	if gpuIndex < 0 || startedArgs[gpuIndex+1] != "999" {
+		t.Fatalf("llama must default to full GPU offload: %v", startedArgs)
+	}
 	for _, path := range []string{"/health", "/v1/chat/completions"} {
 		method := "GET"
 		if strings.Contains(path, "chat") {
@@ -386,6 +395,79 @@ func TestLlamaShimStartProxyStop(t *testing.T) {
 	after.Body.Close()
 	if after.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("health after stop=%d", after.StatusCode)
+	}
+}
+
+func TestLlamaShimCPUFallback(t *testing.T) {
+	var calls [][]string
+	start := func(ctx context.Context, target string, args []string, lim Limits) (Child, error) {
+		calls = append(calls, append([]string(nil), args...))
+		gpu, port := "", 0
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "--n-gpu-layers" {
+				gpu = args[i+1]
+			}
+			if args[i] == "--port" {
+				port, _ = strconv.Atoi(args[i+1])
+			}
+		}
+		if gpu != "0" {
+			return nil, fmt.Errorf("gpu offload unavailable")
+		}
+		if port == 0 {
+			return nil, fmt.Errorf("missing --port")
+		}
+		listener, err := net.Listen("tcp4", "127.0.0.1:"+strconv.Itoa(port))
+		if err != nil {
+			return nil, err
+		}
+		mux := http.NewServeMux()
+		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		})
+		srv := &http.Server{Handler: mux}
+		go func() { _ = srv.Serve(listener) }()
+		return &fakeLlamaChild{srv: srv}, nil
+	}
+	s, err := New(Config{Mode: ModeLlama, Target: fakeExe(t), WorkRoot: t.TempDir(), StartChild: start})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+	model := filepath.Join(t.TempDir(), "m.gguf")
+	if err := os.WriteFile(model, []byte("gguf"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"protocol":"fengshen.llama.http/v1","model":%q}`, model)
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/llama/start", strings.NewReader(body))
+	req.Header = authHeader()
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("fallback start status=%d", resp.StatusCode)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("expected GPU attempt then CPU fallback, got %d calls", len(calls))
+	}
+	gpuLayers := func(args []string) string {
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "--n-gpu-layers" {
+				return args[i+1]
+			}
+		}
+		return ""
+	}
+	if gpuLayers(calls[0]) != "999" {
+		t.Fatalf("first attempt must request full GPU offload: %v", calls[0])
+	}
+	if gpuLayers(calls[1]) != "0" {
+		t.Fatalf("fallback must run entirely on CPU: %v", calls[1])
 	}
 }
 
