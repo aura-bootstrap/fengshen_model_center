@@ -38,7 +38,7 @@ type Manager struct {
 	requests      map[requestKey]string
 	expired       map[string]bool
 	queue         []*job
-	heavy, haar   int
+	reads, writes, haar int
 	reservedBytes int64
 	closed        bool
 	wg            sync.WaitGroup
@@ -55,6 +55,26 @@ func New(executor Executor, options Options) (*Manager, error) {
 		return nil, err
 	}
 	return &Manager{executor: executor, options: options, jobs: map[string]*job{}, requests: map[requestKey]string{}, expired: map[string]bool{}, closeDone: make(chan struct{})}, nil
+}
+
+func scoreScene(scene string) bool {
+	return scene == "highlight.score" || scene == "highlight.vision"
+}
+
+func faceScene(scene string) bool { return scene == "image.face" }
+
+// canStartLocked reports whether a job may run now: scores share up to
+// ScoreSlots concurrent slots, transcribe/timbre run exclusively, and face has
+// its own bounded lane. A write waits for every in-flight score to drain.
+func (m *Manager) canStartLocked(j *job) bool {
+	switch {
+	case faceScene(j.s.Binding.Scene):
+		return m.haar < 2
+	case scoreScene(j.s.Binding.Scene):
+		return m.writes == 0 && m.reads < m.options.ScoreSlots
+	default:
+		return m.writes == 0 && m.reads == 0
+	}
 }
 
 // Submit copies and hashes the full typed body plus binding before admission.
@@ -97,7 +117,7 @@ func (m *Manager) Submit(ctx context.Context, sessionID, taskID, requestID strin
 		return j.s, nil
 	}
 	face := binding.Scene == "image.face"
-	if face && m.haar >= 2 || !face && m.heavy >= 1 && len(m.queue) >= 8 {
+	if face && m.haar >= 2 || !face && (m.reads > 0 || m.writes > 0) && len(m.queue) >= 8 {
 		return Snapshot{}, failure(429, "center_runtime_busy")
 	}
 	if len(m.jobs) >= m.options.MaxJobs || m.reservedBytes+MaxResultBytes > m.options.MaxRetainedBytes {
@@ -115,7 +135,7 @@ func (m *Manager) Submit(ctx context.Context, sessionID, taskID, requestID strin
 	m.requests[key] = id
 	m.reservedBytes += MaxResultBytes
 	m.eventLocked(j, nil)
-	if face || m.heavy == 0 {
+	if m.canStartLocked(j) {
 		m.startLocked(j)
 	} else {
 		m.queue = append(m.queue, j)
@@ -149,10 +169,13 @@ func (m *Manager) startLocked(j *job) {
 	j.owned = true
 	j.s.State = Loading
 	j.s.StartedAt = m.options.Clock.Now()
-	if j.s.Binding.Scene == "image.face" {
+	switch {
+	case faceScene(j.s.Binding.Scene):
 		m.haar++
-	} else {
-		m.heavy++
+	case scoreScene(j.s.Binding.Scene):
+		m.reads++
+	default:
+		m.writes++
 	}
 	m.eventLocked(j, nil)
 	duration := m.options.RunTimeout
@@ -215,11 +238,18 @@ func (m *Manager) dispatchLocked() {
 		}
 	}
 	m.queue = live
-	if !m.closed && m.heavy == 0 && len(m.queue) > 0 {
-		j := m.queue[0]
-		m.queue = m.queue[1:]
-		m.startLocked(j)
+	if m.closed {
+		return
 	}
+	remaining := m.queue[:0]
+	for _, j := range m.queue {
+		if m.canStartLocked(j) {
+			m.startLocked(j)
+		} else {
+			remaining = append(remaining, j)
+		}
+	}
+	m.queue = remaining
 }
 
 // Only fixed capability codes may cross the executor boundary.
@@ -278,10 +308,13 @@ func (m *Manager) execute(j *job) {
 	if j.s.State != Succeeded {
 		m.releaseLocked(j)
 	}
-	if j.s.Binding.Scene == "image.face" {
+	switch {
+	case faceScene(j.s.Binding.Scene):
 		m.haar--
-	} else {
-		m.heavy--
+	case scoreScene(j.s.Binding.Scene):
+		m.reads--
+	default:
+		m.writes--
 	}
 	m.dispatchLocked()
 }

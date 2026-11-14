@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -192,17 +193,25 @@ func llamaResultEventCategory(event *scoring.RawEvent, input runtimejobs.ScoreIn
 	return ""
 }
 
-// All cache fields are protected by Executor.heavy, including timer callbacks.
+// All cache fields are protected by mu, including timer callbacks.
 type llamaRuntime struct {
+	mu         sync.Mutex
 	session    *shimSession
 	identity   string
 	cancel     context.CancelFunc
 	release    func()
 	generation uint64
 	idleCancel chan struct{}
+	refs       int
 }
 
 func (r *llamaRuntime) stopIdle() {
+	r.mu.Lock()
+	r.stopIdleLocked()
+	r.mu.Unlock()
+}
+
+func (r *llamaRuntime) stopIdleLocked() {
 	r.generation++
 	if r.idleCancel != nil {
 		close(r.idleCancel)
@@ -211,7 +220,19 @@ func (r *llamaRuntime) stopIdle() {
 }
 
 func (r *llamaRuntime) unload() {
-	r.stopIdle()
+	r.mu.Lock()
+	r.unloadLocked()
+	r.mu.Unlock()
+}
+
+// unloadLocked tears down the shared session. Callers hold mu. It is a no-op
+// while score jobs still reference the session, so a write/idle/close path never
+// pulls the server out from under in-flight concurrent inference.
+func (r *llamaRuntime) unloadLocked() {
+	if r.refs > 0 {
+		return
+	}
+	r.stopIdleLocked()
 	if r.cancel != nil {
 		r.cancel()
 		r.cancel = nil
@@ -230,10 +251,16 @@ func (r *llamaRuntime) unload() {
 
 func (e *Executor) idleLlama() {
 	r := e.llama
-	r.stopIdle()
+	r.mu.Lock()
+	if r.refs > 0 {
+		r.mu.Unlock()
+		return
+	}
+	r.stopIdleLocked()
 	generation := r.generation
 	stop := make(chan struct{})
 	r.idleCancel = stop
+	r.mu.Unlock()
 	var tick <-chan time.Time
 	var timer *time.Timer
 	if e.llamaAfter != nil {
@@ -263,9 +290,11 @@ func (e *Executor) idleLlama() {
 			return
 		}
 		defer func() { <-e.heavy }()
-		if r.generation == generation {
-			r.unload()
+		r.mu.Lock()
+		if r.generation == generation && r.refs == 0 {
+			r.unloadLocked()
 		}
+		r.mu.Unlock()
 	}()
 }
 
@@ -446,11 +475,19 @@ func (e *Executor) scoreLocked(ctx context.Context, req runtimejobs.Request, res
 	state := e.llama
 	release := resolved.Release
 	success := false
+	acquired := false
 	defer func() {
-		if !success || ctx.Err() != nil {
-			state.unload()
-		} else {
-			e.idleLlama()
+		if acquired {
+			state.mu.Lock()
+			state.refs--
+			idle := success && ctx.Err() == nil && state.refs == 0
+			if !success || ctx.Err() != nil {
+				state.unloadLocked()
+			}
+			state.mu.Unlock()
+			if idle {
+				e.idleLlama()
+			}
 		}
 		if release != nil {
 			release()
@@ -510,9 +547,20 @@ func (e *Executor) scoreLocked(ctx context.Context, req runtimejobs.Request, res
 	if err != nil {
 		return fail(err)
 	}
+	// Tear down a stale session before reporting Loading so the stage never
+	// observes the replaced process. Concurrent scores share one identity (the
+	// manager drains scores before a binding replacement), so the gap between
+	// this unlock and the load below cannot observe a foreign session.
+	state.mu.Lock()
+	state.stopIdleLocked()
 	if state.session != nil && state.identity != identity {
-		state.unload()
+		if state.refs > 0 {
+			state.mu.Unlock()
+			return fail(errors.New("center_llama_load_failed"))
+		}
+		state.unloadLocked()
 	}
+	state.mu.Unlock()
 	runCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	if emit != nil {
@@ -520,11 +568,16 @@ func (e *Executor) scoreLocked(ctx context.Context, req runtimejobs.Request, res
 			return fail(err)
 		}
 	}
+	// Concurrent score jobs share one persistent llama-server (--parallel N).
+	// The session is loaded once under mu and reference-counted; inference runs
+	// outside mu against the local client, which stays valid while refs > 0.
+	state.mu.Lock()
 	if state.session == nil {
 		life, stop := context.WithCancel(e.lifetime)
 		session, err := e.newShimSession(life, "llama", target, "", "")
 		if err != nil {
 			stop()
+			state.mu.Unlock()
 			return fail(err)
 		}
 		startCtx, cancelStart := context.WithTimeout(runCtx, 3*time.Minute)
@@ -533,6 +586,7 @@ func (e *Executor) scoreLocked(ctx context.Context, req runtimejobs.Request, res
 		if err != nil {
 			_ = session.Close()
 			stop()
+			state.mu.Unlock()
 			return fail(errors.New("center_llama_load_failed"))
 		}
 		state.session = session
@@ -544,7 +598,10 @@ func (e *Executor) scoreLocked(ctx context.Context, req runtimejobs.Request, res
 		release()
 		release = nil
 	}
+	state.refs++
+	acquired = true
 	client := state.session.client
+	state.mu.Unlock()
 	// Health and inference both traverse the shim; the upstream key stays inside it.
 	if err = client.LlamaHealth(runCtx); err != nil {
 		if runCtx.Err() != nil {

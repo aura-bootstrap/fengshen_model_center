@@ -345,14 +345,29 @@ func TestLlamaShimStartProxyStop(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("start status=%d", resp.StatusCode)
 	}
-	ctxIndex := -1
+	ctxIndex, parallelIndex := -1, -1
 	for i := 0; i+1 < len(startedArgs); i++ {
-		if startedArgs[i] == "--ctx-size" {
+		switch startedArgs[i] {
+		case "--ctx-size":
 			ctxIndex = i
+		case "--parallel":
+			parallelIndex = i
 		}
 	}
-	if ctxIndex < 0 || startedArgs[ctxIndex+1] != "32768" {
-		t.Fatalf("llama context must cover split statement prompts: %v", startedArgs)
+	if ctxIndex < 0 || parallelIndex < 0 {
+		t.Fatalf("llama must size context per parallel slot: %v", startedArgs)
+	}
+	ctxSize, err := strconv.Atoi(startedArgs[ctxIndex+1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	slots, err := strconv.Atoi(startedArgs[parallelIndex+1])
+	if err != nil || slots < 1 {
+		t.Fatalf("invalid parallel slots: %v", startedArgs)
+	}
+	// llama-server divides --ctx-size by --parallel; each slot must still cover split statement prompts.
+	if ctxSize/slots != 32768 {
+		t.Fatalf("llama per-slot context must cover split statement prompts: %v", startedArgs)
 	}
 	gpuIndex := -1
 	for i := 0; i+1 < len(startedArgs); i++ {

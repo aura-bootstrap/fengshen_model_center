@@ -257,7 +257,7 @@ func TestCapabilityEvidenceExactIdentityAndRetention(t *testing.T) {
 func TestCapabilityEvidenceDoesNotPromoteQueuedOrCancelled(t *testing.T) {
 	c := &fakeClock{now: time.Unix(100, 0)}
 	e := newControlled()
-	m, _ := New(e, Options{Clock: c})
+	m, _ := New(e, Options{Clock: c, ScoreSlots: 1}) // cap scores so the next one queues
 	s := submit(t, m, "r")
 	call := <-e.calls
 	ref := binding("highlight.score")
@@ -280,7 +280,7 @@ func TestCapabilityEvidenceDoesNotPromoteQueuedOrCancelled(t *testing.T) {
 
 func TestAdmissionIdempotencyAndOwnership(t *testing.T) {
 	e := newControlled()
-	m, _ := New(e, Options{})
+	m, _ := New(e, Options{ScoreSlots: 1}) // cap scores so the loop fills the queue
 	s := submit(t, m, "r")
 	call := <-e.calls
 	defer func() { finish(call); m.Close() }()
@@ -326,7 +326,7 @@ func TestCancelCannotPublishSuccess(t *testing.T) {
 func TestClockTimeoutQueueAndExpiry(t *testing.T) {
 	c := &fakeClock{now: time.Unix(100, 0)}
 	e := newControlled()
-	m, _ := New(e, Options{Clock: c})
+	m, _ := New(e, Options{Clock: c, ScoreSlots: 1}) // cap scores so "q" queues
 	s := submit(t, m, "r")
 	call := <-e.calls
 	q := submit(t, m, "q")
@@ -427,4 +427,65 @@ func TestHTTPContextIndependentAndOwnedResults(t *testing.T) {
 		t.Fatal("result alias")
 	}
 	m.Close()
+}
+
+func TestScoreSlotsParallelAndWriteExclusion(t *testing.T) {
+	e := newControlled()
+	m, _ := New(e, Options{ScoreSlots: 2})
+	defer m.Close()
+	s0 := submit(t, m, "s0")
+	c0 := <-e.calls
+	s1 := submit(t, m, "s1")
+	c1 := <-e.calls
+	if s0.State != Loading || s1.State != Loading {
+		t.Fatal("scores did not run concurrently", s0.State, s1.State)
+	}
+	// Face has its own lane and starts while scores occupy the read slots.
+	f, err := m.Submit(context.Background(), "session", "task", "f", binding("image.face"), body("image.face"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cf := <-e.calls
+	if f.State != Loading {
+		t.Fatal("face blocked behind scores", f.State)
+	}
+	// The third score queues once both read slots are taken.
+	s2 := submit(t, m, "s2")
+	if s2.State != Queued {
+		t.Fatal("third score not queued", s2.State)
+	}
+	// A write waits for every in-flight score to drain.
+	w, err := m.Submit(context.Background(), "session", "task", "w", binding("highlight.transcribe"), streamBody())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.State != Queued {
+		t.Fatal("write not queued behind scores", w.State)
+	}
+	// Freeing one slot dispatches the queued score, not the write.
+	finish(c0)
+	waitTerminal(t, m, s0.ID)
+	c2 := <-e.calls
+	if got, _ := m.Snapshot("session", "task", s2.ID); got.State != Loading {
+		t.Fatal("queued score not dispatched", got.State)
+	}
+	if got, _ := m.Snapshot("session", "task", w.ID); got.State != Queued {
+		t.Fatal("write started before scores drained", got.State)
+	}
+	cf.reply <- Result{Component: cf.request.Body.Component, Face: NoFace}
+	waitTerminal(t, m, f.ID)
+	finish(c1)
+	waitTerminal(t, m, s1.ID)
+	if got, _ := m.Snapshot("session", "task", w.ID); got.State != Queued {
+		t.Fatal("write started before last score drained", got.State)
+	}
+	finish(c2)
+	waitTerminal(t, m, s2.ID)
+	cw := <-e.calls
+	if got, _ := m.Snapshot("session", "task", w.ID); got.State != Loading {
+		t.Fatal("write not dispatched after scores drained", got.State)
+	}
+	m.Cancel("session", "task", w.ID)
+	finish(cw)
+	waitTerminal(t, m, w.ID)
 }

@@ -372,7 +372,10 @@ func TestExecutorHeavyGateAndHaarException(t *testing.T) {
 	defer func() { <-e.heavy }()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := e.Execute(ctx, req, nil); !errors.Is(err, context.DeadlineExceeded) {
+	// Scores share the persistent server and bypass the gate; only writes take it.
+	write := req
+	write.Binding.Scene = "highlight.transcribe"
+	if _, err := e.Execute(ctx, write, nil); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("heavy request bypassed gate", err)
 	}
 	face := req

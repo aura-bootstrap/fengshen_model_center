@@ -148,7 +148,7 @@ func TestFrozenRequestCannotBeMutatedByExecutor(t *testing.T) {
 func TestDelayedTimerCannotAdmitExpiredQueueOrSuccess(t *testing.T) {
 	c := &fakeClock{now: time.Unix(100, 0)}
 	e := newControlled()
-	m, _ := New(e, Options{Clock: c})
+	m, _ := New(e, Options{Clock: c, ScoreSlots: 1}) // cap scores so "q" queues
 	s := submit(t, m, "r")
 	call := <-e.calls
 	q := submit(t, m, "q")

@@ -73,7 +73,10 @@ func (s *Server) launchLlama(req componentprotocol.LlamaStartRequest, gpuLayers 
 	}
 	args := []string{
 		"--host", "127.0.0.1", "--offline", "--no-webui", "--no-warmup",
-		"--parallel", "1", "--ctx-size", "32768", "--n-gpu-layers", strconv.Itoa(gpuLayers),
+		// llama-server divides --ctx-size across --parallel slots (n_ctx_slot =
+		// ctx/parallel), so ctx must scale with slots to keep 32768 tokens per
+		// candidate; total KV stays ctx-sized regardless of slot count.
+		"--parallel", "4", "--ctx-size", "131072", "--n-gpu-layers", strconv.Itoa(gpuLayers),
 		"--threads", strconv.Itoa(llamaThreads()), "--no-mmproj-offload", "--model", req.Model,
 	}
 	if req.Vision {

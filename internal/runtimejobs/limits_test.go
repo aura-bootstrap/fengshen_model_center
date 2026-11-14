@@ -139,7 +139,7 @@ func TestInvalidResultAndSecretErrorsNeverPublished(t *testing.T) {
 
 func TestQueuedCancelNeverExecutesAndEventsWait(t *testing.T) {
 	e := newControlled()
-	m, _ := New(e, Options{})
+	m, _ := New(e, Options{ScoreSlots: 1}) // cap scores so "q" queues behind "r"
 	s := submit(t, m, "r")
 	call := <-e.calls
 	q := submit(t, m, "q")

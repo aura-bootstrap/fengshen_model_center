@@ -119,12 +119,18 @@ func (e *Executor) Execute(ctx context.Context, req runtimejobs.Request, emit ru
 	defer done()
 	score := req.Binding.Scene == "highlight.score" || req.Binding.Scene == "highlight.vision"
 	if req.Binding.Scene != "image.face" {
-		if err = e.lockHeavy(ctx); err != nil {
-			return runtimejobs.Result{}, err
-		}
-		defer func() { <-e.heavy }()
-		e.llama.stopIdle()
-		if !score {
+		if score {
+			// Scores share one persistent llama-server via reference counting and
+			// are admitted concurrently (<= ScoreSlots) by the job manager, so they
+			// do not take the exclusive heavy gate. Writes still exclude scores:
+			// the manager only dispatches a write once every score has drained.
+			e.llama.stopIdle()
+		} else {
+			if err = e.lockHeavy(ctx); err != nil {
+				return runtimejobs.Result{}, err
+			}
+			defer func() { <-e.heavy }()
+			e.llama.stopIdle()
 			e.llama.unload()
 		}
 	}

@@ -270,6 +270,9 @@ type Options struct {
 	QueueTimeout, RunTimeout, HaarTimeout, Retention time.Duration
 	MaxJobs                                          int
 	MaxRetainedBytes                                 int64
+	// ScoreSlots bounds concurrent highlight.score/vision jobs sharing one
+	// persistent llama-server (--parallel N). Transcribe/timbre stay exclusive.
+	ScoreSlots int
 }
 
 func (o *Options) defaults() error {
@@ -294,7 +297,10 @@ func (o *Options) defaults() error {
 	if o.MaxRetainedBytes == 0 {
 		o.MaxRetainedBytes = 128 * MaxResultBytes
 	}
-	if o.QueueTimeout < 0 || o.QueueTimeout > 2*time.Minute || o.RunTimeout < 0 || o.RunTimeout > 30*time.Minute || o.HaarTimeout < 0 || o.HaarTimeout > 10*time.Second || o.Retention < 0 || o.Retention > 30*time.Minute || o.MaxJobs < 1 || o.MaxJobs > 128 || o.MaxRetainedBytes < MaxResultBytes {
+	if o.ScoreSlots == 0 {
+		o.ScoreSlots = 4
+	}
+	if o.QueueTimeout < 0 || o.QueueTimeout > 2*time.Minute || o.RunTimeout < 0 || o.RunTimeout > 30*time.Minute || o.HaarTimeout < 0 || o.HaarTimeout > 10*time.Second || o.Retention < 0 || o.Retention > 30*time.Minute || o.MaxJobs < 1 || o.MaxJobs > 128 || o.MaxRetainedBytes < MaxResultBytes || o.ScoreSlots < 1 || o.ScoreSlots > 4 {
 		return errors.New("center_options_invalid")
 	}
 	return nil
